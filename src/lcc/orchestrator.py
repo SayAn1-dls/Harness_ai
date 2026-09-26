@@ -238,7 +238,7 @@ class Orchestrator:
         if task.lane == Lane.A:  # lane A (intake -> coder -> verifier): the coder plans for itself
             self.plan = quick_plan(task, self.store)
         else:
-            self.plan = run_planner(task, self.llm, self._summary(8, 1500), self.store)
+            self.plan = run_planner(task, self.llm, self._summary(6, 1000), self.store)
         task.plan_version = self.plan.version
         transition(task, TaskStatus.PLAN_VALIDATION)
         transition(task, TaskStatus.READY_TO_EXECUTE)
@@ -512,7 +512,7 @@ class Orchestrator:
         if task.lane == Lane.A:
             self.plan = quick_plan(task, self.store, recovery_note=note)
         else:
-            self.plan = run_planner(task, self.llm, self._summary(6, 1200), self.store, recovery_note=note)
+            self.plan = run_planner(task, self.llm, self._summary(4, 800), self.store, recovery_note=note)
         task.plan_version = self.plan.version
         record.new_plan = [s.action for s in self.plan.steps]
         self.store.write_json(f"iteration_{task.iteration}.json", record)

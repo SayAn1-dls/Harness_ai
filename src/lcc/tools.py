@@ -171,20 +171,20 @@ class ToolRegistry:
             yield p
 
     def _register_defaults(self) -> None:
-        path = _p("string", "Repo-relative path")
+        path = _p("string", "")  # self-explanatory; every schema byte is re-sent on every step
         R = self._register
         R(ToolSpec("repo_tree", "List repository files.", self.repo_tree,
-                   _schema([], max_entries=_p("integer", "Default 300"))))
+                   _schema([], max_entries=_p("integer", ""))))
         R(ToolSpec("get_repo_map", "Ranked map of important files and their symbols. Cheap orientation.", self.get_repo_map))
-        R(ToolSpec("search_code", "Case-insensitive search of file contents; returns path:line: text.", self.search_code,
-                   _schema(["query"], query=_p("string", "Text (or regex if regex=true)"), regex=_p("boolean", ""),
-                           path_glob=_p("string", "e.g. *.py or src/**/*.ts"), max_hits=_p("integer", "Default 30")), cost=2))
+        R(ToolSpec("search_code", "Case-insensitive text (or regex) search; returns path:line: text.", self.search_code,
+                   _schema(["query"], query=_p("string", ""), regex=_p("boolean", ""),
+                           path_glob=_p("string", "e.g. *.py"), max_hits=_p("integer", "")), cost=2))
         R(ToolSpec("find_symbol", "Where a function/class is defined.", self.find_symbol,
                    _schema(["name"], name=_p("string", ""))))
         R(ToolSpec("find_references", "Whole-word usages of an identifier.", self.find_references,
                    _schema(["symbol"], symbol=_p("string", ""))))
         R(ToolSpec("read_file", f"Numbered lines of a file (max {READ_WINDOW} per call).", self.read_file,
-                   _schema(["path"], path=path, start=_p("integer", "1-based"), end=_p("integer", "")), cost=2))
+                   _schema(["path"], path=path, start=_p("integer", ""), end=_p("integer", "")), cost=2))
         R(ToolSpec("edit_file", "Replace old_str (exact file text, unique unless replace_all) with new_str. "
                    "Syntax-checked; returns the new lines.", self.edit_file,
                    _schema(["path", "old_str", "new_str"], path=path, old_str=_p("string", ""), new_str=_p("string", ""),
@@ -202,10 +202,9 @@ class ToolRegistry:
         R(ToolSpec("run_typecheck", "Run the configured typechecker.", self.run_typecheck, cost=4))
         R(ToolSpec("shell", "Run a sh command in the repo root (python = project interpreter). Git-state and destructive "
                    "commands are blocked.", self.shell,
-                   _schema(["command"], command=_p("string", ""), timeout=_p("integer", "Seconds, default 120")), risk="high", cost=6))
+                   _schema(["command"], command=_p("string", ""), timeout=_p("integer", "seconds")), risk="high", cost=6))
         R(ToolSpec("finish", "Call when done.", lambda **kw: {"done": True, **kw},
-                   _schema(["summary"], summary=_p("string", "Root cause and fix"),
-                           files=_p("array", "Relevant paths (context agent)", items={"type": "string"}))))
+                   _schema(["summary"], summary=_p("string", ""), files=_p("array", "", items={"type": "string"}))))
 
     # ---- read tools -------------------------------------------------
     def repo_tree(self, max_entries: int = 300) -> dict[str, Any]:

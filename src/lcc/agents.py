@@ -112,7 +112,7 @@ CONTRACTS: dict[str, AgentContract] = {
         name="coder",
         purpose="Implement the plan with a minimal patch.",
         tools=[
-            "search_code", "find_symbol", "find_references", "read_file", "repo_tree",
+            "search_code", "find_symbol", "read_file", "repo_tree",
             "edit_file", "write_file", "run_test", "shell", "git_history",
         ],
         permissions={"read_repository": True, "write_repository": True, "run_tests": True, "shell": True},
@@ -349,7 +349,7 @@ def quick_plan(task: TaskState, store: HarnessStore, recovery_note: str = "") ->
 # ---------------------------------------------------------------- coder
 CODER_SYSTEM = """You are the Implementation Agent of an autonomous coding harness. Fix the issue like a careful senior
 engineer: find the root cause, make a minimal correct change, prove it with a test.
-1. Locate: use the context excerpts below first; then find_symbol / search_code / read_file line ranges.
+1. Locate: use the context excerpts below first; then find_symbol / search_code (regex \bname\b finds usages) / read_file line ranges.
 2. Reproduce when cheap: run_test on one file, or `shell` with python -c.
 3. Fix the root cause, including the edge cases the issue implies. Keep public signatures; check callers.
 4. Add a regression test beside the existing tests, in their style, that fails before the fix; run_test it.
@@ -480,7 +480,7 @@ def run_reviewer(
         f"Task: {task.objective}\nIssue:\n{issue_text(task, 4000)}\n"
         f"Acceptance: {[c.model_dump(include={'id', 'text'}) for c in task.acceptance_criteria]}\n"
         f"Files edited outside the plan: {scope_expansions or []}\n"
-        f"Test evidence:\n{test_evidence[-2000:]}\n\nDiff:\n{truncate(diff, 12000)}",
+        f"Test evidence:\n{test_evidence[-800:]}\n\nDiff:\n{truncate(diff, 12000)}",
         system=(
             "You are an adversarial reviewer. Try to prove the change is wrong: unmet acceptance criteria, broken "
             "callers, missing edge cases, unjustified scope. Report only real problems, each with concrete evidence "

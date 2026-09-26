@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 400" width="860" height="400" role="img" aria-label="Illustrative terminal session of make auto: scan, candidates, fix, verify and pull request">
+  <defs>
+    <style>
+      .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+      .cur { animation: blink 1s steps(1) infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+    </style>
+  </defs>
+  <rect width="860" height="400" rx="14" fill="#0b1220"/>
+  <rect x="0" y="0" width="860" height="34" rx="14" fill="#111a2e"/>
+  <rect x="0" y="20" width="860" height="14" fill="#111a2e"/>
+  <circle cx="22" cy="17" r="6" fill="#f87171"/><circle cx="42" cy="17" r="6" fill="#fbbf24"/><circle cx="62" cy="17" r="6" fill="#34d399"/>
+  <text x="430" y="22" text-anchor="middle" class="m" font-size="12" fill="#64748b">illustrative session · make auto</text>
+
+  <rect width="0" height="0"><animate id="clock" attributeName="width" values="0;0" dur="16s" begin="0s;clock.end"/></rect>
+  <g class="m" xml:space="preserve" style="white-space:pre">
+    <text x="24" y="66" fill="#e2e8f0">$ make auto REPO=https://github.com/acme/demo</text>
+    <text x="24" y="92" opacity="0" fill="#7dd3fc">cloning https://github.com/acme/demo -&gt; workspaces/demo<set attributeName="opacity" to="1" begin="clock.begin+0.6s" dur="15.4s"/></text>
+    <text x="24" y="114" opacity="0" fill="#7dd3fc">scanning: running the test suite<set attributeName="opacity" to="1" begin="clock.begin+1.4s" dur="14.6s"/></text>
+    <text x="24" y="136" opacity="0" fill="#7dd3fc">scanning: static analysis · model audit of the central files<set attributeName="opacity" to="1" begin="clock.begin+2.2s" dur="13.8s"/></text>
+    <text x="24" y="162" opacity="0" fill="#cbd5e1">  1  audit   bug    mean divides by n-1 (stats.py)<set attributeName="opacity" to="1" begin="clock.begin+3.2s" dur="12.8s"/></text>
+    <text x="24" y="184" opacity="0" fill="#cbd5e1">  2  static  bug    mutable default argument in calc.py<set attributeName="opacity" to="1" begin="clock.begin+3.6s" dur="12.4s"/></text>
+    <text x="24" y="210" opacity="0" fill="#94a3b8">  coder     read_file, find_symbol  (+2140/61 tok)<set attributeName="opacity" to="1" begin="clock.begin+4.6s" dur="11.4s"/></text>
+    <text x="24" y="232" opacity="0" fill="#94a3b8">  coder     edit_file, write_file   (+2388/140 tok)<set attributeName="opacity" to="1" begin="clock.begin+5.4s" dur="10.6s"/></text>
+    <text x="24" y="254" opacity="0" fill="#34d399">✓ verifier success   proof 5/5: new test fails before, passes after<set attributeName="opacity" to="1" begin="clock.begin+6.2s" dur="9.8s"/></text>
+    <text x="24" y="276" opacity="0" fill="#34d399">✓ reviewer success   judge PASS<set attributeName="opacity" to="1" begin="clock.begin+7.0s" dur="9.0s"/></text>
+    <text x="24" y="302" opacity="0" fill="#a5b4fc">pull request: https://github.com/acme/demo/pull/1<set attributeName="opacity" to="1" begin="clock.begin+8.0s" dur="8.0s"/></text>
+    <text x="24" y="324" opacity="0" fill="#a5b4fc">pull request: https://github.com/acme/demo/pull/2<set attributeName="opacity" to="1" begin="clock.begin+9.4s" dur="6.6s"/></text>
+    <text x="24" y="352" opacity="0" fill="#fbbf24">2 verified fixes · 2 PRs opened · nothing merged (maintainers decide)<set attributeName="opacity" to="1" begin="clock.begin+10.6s" dur="5.4s"/></text>
+    <text x="24" y="378" opacity="0" fill="#e2e8f0">$ <tspan class="cur" fill="#2dd4bf">▍</tspan><set attributeName="opacity" to="1" begin="clock.begin+11.4s" dur="4.6s"/></text>
+  </g>
+</svg>
