@@ -167,3 +167,52 @@ def test_max_iterations_stops(tmp_path):
     task, _, _, _ = _run(tmp_path, {"coder": attempts}, max_iterations=3)
     assert task.status == TaskStatus.STOPPED and task.stop_reason == "max_iterations"
     assert task.budget.tokens_used > 0 and task.budget.tool_calls > 0
+
+
+# ---------------------------------------------------------------- proof of fix
+def _green_repo(tmp_path: Path) -> Path:
+    """Suite passes at baseline; the issue (negative numbers) is untested."""
+    root = tmp_path / "repo"
+    (root / "tests").mkdir(parents=True)
+    (root / "absval.py").write_text("def absval(x):\n    return x\n")
+    (root / "tests" / "test_absval.py").write_text(
+        "import unittest\nfrom absval import absval\n\n\nclass T(unittest.TestCase):\n"
+        "    def test_pos(self):\n        self.assertEqual(absval(3), 3)\n"
+    )
+    return root
+
+
+def _run_green(tmp_path, script, **budget):
+    root = _green_repo(tmp_path)
+    store = HarnessStore(root)
+    task = create_task(store, "GH-2", "absval(-3) should be 3", root, issue_body="negative input", budget_overrides=budget)
+    return Orchestrator(store, ScriptedProvider(script)).run(task), root
+
+
+FIX = [tc("edit_file", path="absval.py", old_str="return x", new_str="return -x if x < 0 else x")]
+DONE = [tc("finish", summary="done")]
+
+
+def test_noop_attempt_is_not_verified(tmp_path):
+    task, _ = _run_green(tmp_path, {"coder": [DONE] * 4}, max_iterations=2)
+    assert task.status == TaskStatus.STOPPED
+    assert "No files were changed" in (task.last_failure or "")
+
+
+def test_fix_without_test_is_not_verified_when_baseline_green(tmp_path):
+    task, _ = _run_green(tmp_path, {"coder": [FIX, DONE, DONE, DONE]}, max_iterations=2)
+    assert task.status == TaskStatus.STOPPED
+    assert task.baseline["tests_failed"] == 0
+    assert "Add or update a test" in (task.last_failure or "")
+
+
+def test_test_that_passes_on_base_is_rejected_then_real_test_accepted(tmp_path):
+    weak = [tc("edit_file", path="tests/test_absval.py", old_str="self.assertEqual(absval(3), 3)",
+               new_str="self.assertEqual(absval(3), 3)\n        self.assertEqual(absval(0), 0)")]
+    strong = [tc("edit_file", path="tests/test_absval.py", old_str="self.assertEqual(absval(0), 0)",
+                 new_str="self.assertEqual(absval(-3), 3)")]
+    task, root = _run_green(tmp_path, {"coder": [FIX, weak, DONE, strong, DONE]})
+    assert task.status == TaskStatus.HUMAN_REVIEW and task.iteration == 2
+    assert "also pass WITHOUT your source change" in task.history[0].new_observations[0]
+    assert task.verification["proof_level"] == 5
+    assert "return -x if x < 0 else x" in (root / "absval.py").read_text()  # source restored after base run

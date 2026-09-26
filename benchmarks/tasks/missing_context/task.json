@@ -1,0 +1,6 @@
+{
+  "id": "missing_context",
+  "category": "missing-context",
+  "expect": "resolve",
+  "objective": "Duplicate accounts when email case differs"
+}

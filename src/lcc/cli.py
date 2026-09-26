@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import typer
@@ -16,6 +17,23 @@ from lcc.store import HarnessStore, write_handoff
 
 app = typer.Typer(help="LCC autonomous software-engineering harness")
 console = Console()
+
+
+def _load_dotenv(path: Path = Path(".env")) -> None:
+    """Minimal .env loader (KEY=VALUE lines). Existing environment variables win."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip().removeprefix("export "), value.strip().strip('"').strip("'"))
+
+
+@app.callback()
+def _main() -> None:
+    _load_dotenv()
 
 
 def _store(path: Path | None = None) -> HarnessStore:
@@ -125,6 +143,32 @@ def pr(workspace: Path = typer.Option(Path("."), "--workspace")) -> None:
     task.pr_url = url
     store.save_task(task)
     console.print(url)
+
+
+@app.command()
+def bench(
+    provider: str = typer.Option(None, "--provider", "-p", help="mock | scripted | deepseek | gemini | openai | grok"),
+    task: list[str] = typer.Option(None, "--task", "-t", help="Run only these task ids"),
+    max_iterations: int = typer.Option(5, "--max-iterations"),
+    tasks_dir: Path = typer.Option(Path("benchmarks/tasks"), "--tasks-dir"),
+    results_dir: Path = typer.Option(Path("benchmarks/results"), "--results-dir"),
+) -> None:
+    """Run the benchmark suite and grade each task with its hidden check."""
+    from lcc.bench import run_bench
+
+    name = provider or os.environ.get("LCC_PROVIDER") or "mock"
+
+    def show(r: dict) -> None:
+        mark = "[green]PASS[/]" if r["resolved"] else "[red]FAIL[/]"
+        console.print(
+            f"{mark} {r['id']:<20} status={r['status']:<13} stop={r['stop_reason']} it={r['iterations']} "
+            f"tokens={r['tokens']} tools={r['tool_calls']} {r['runtime_s']}s" + (f"\n  error: {r['error'].splitlines()[0]}" if r["error"] else "")
+        )
+
+    _, summary, out = run_bench(tasks_dir, name, task or None, max_iterations, results_dir, on_result=show)
+    console.print_json(json.dumps(summary))
+    if out:
+        console.print(f"results: {out}")
 
 
 @app.command("dump-state")

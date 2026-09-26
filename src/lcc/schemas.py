@@ -323,6 +323,7 @@ class TaskState(BaseModel):
     history: list[IterationRecord] = Field(default_factory=list)
     agents: list[AgentInvocation] = Field(default_factory=list)
     verification: dict[str, Any] = Field(default_factory=dict)
+    baseline: dict[str, Any] = Field(default_factory=dict)
     budget: Budget = Field(default_factory=Budget)
     status: TaskStatus = TaskStatus.RECEIVED
     current_agent: str | None = None

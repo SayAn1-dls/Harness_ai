@@ -38,7 +38,8 @@ from lcc.schemas import (
 )
 from lcc.state_machine import LEGAL_TRANSITIONS, transition
 from lcc.store import HarnessStore, write_handoff
-from lcc.tools import ToolPolicy, ToolRegistry, workspace_diff
+from lcc.context_engine import _is_test
+from lcc.tools import ToolPolicy, ToolRegistry, base_sources, changed_files, workspace_diff
 from lcc.workspace import Workspace, assert_not_main
 
 TINY_REPO_FILES = 8
@@ -96,6 +97,7 @@ class Orchestrator:
         return task
 
     def _iterate(self, task: TaskState, until_human: bool) -> None:
+        self._baseline(task)
         while True:
             stop = self._stop_reason(task)
             if stop:
@@ -256,6 +258,9 @@ class Orchestrator:
         lint_res = tools.run_lint()
         lint_ok = bool(lint_res.get("ok") or lint_res.get("skipped"))
         ok = bool(test_res.get("ok")) and lint_ok
+        proof = self._prove_fix(task, tools) if ok else None
+        if proof and not proof["ok"]:
+            ok = False
         evidence = [
             f"tests: rc={test_res.get('returncode')} run={test_res.get('tests_run')} failed={test_res.get('tests_failed')}",
             f"lint: ok={lint_res.get('ok')} skipped={bool(lint_res.get('skipped'))}",
@@ -265,6 +270,9 @@ class Orchestrator:
             output += "\n[harness] tests_run=0: no tests were collected, which is not a pass."
         if not lint_ok:
             output += f"\n[lint]\n{lint_res.get('stdout') or ''}{lint_res.get('stderr') or ''}"
+        if proof:
+            output += f"\n{proof['message']}"
+            evidence.append(f"proof level={proof['level']}: {proof['message']}")
         evidence.append(output[-1500:])
         self.last_verification = VerificationResult(
             passed=ok, commands=[test_res, lint_res], acceptance=task.acceptance_criteria, evidence=evidence,
@@ -275,12 +283,47 @@ class Orchestrator:
             "tests_run": test_res.get("tests_run"),
             "tests_failed": test_res.get("tests_failed"),
             "lint_ok": lint_ok,
+            "proof_level": proof["level"] if proof else 0,
         }
         self.store.write_json(f"verification_{task.iteration}.json", self.last_verification)
         self.store.emit(task, "AGENT_COMPLETED", agent="verifier", result="success" if ok else "fail",
                         artifacts=[f"verification_{task.iteration}.json"], **task.verification)
         task.last_failure = None if ok else output[-6000:]
         return ok
+
+    def _baseline(self, task: TaskState) -> None:
+        """Run the suite once on the untouched branch so later passes can be compared against it."""
+        if task.baseline:
+            return
+        res = self._tools(task, CONTRACTS["verifier"].permissions).run_test()
+        task.baseline = {"ok": bool(res["ok"]), "tests_run": res["tests_run"], "tests_failed": res["tests_failed"]}
+        self.store.emit(task, "BASELINE", agent="verifier", result="pass" if res["ok"] else "fail", **task.baseline)
+
+    def _prove_fix(self, task: TaskState, tools: ToolRegistry) -> dict:
+        """Evidence that the change fixes something: previously failing tests now pass (fail-to-pass), or
+        new/updated tests fail on the base code and pass with the change. Passing an unchanged suite is not proof."""
+        root = Path(task.workspace)
+        changed = changed_files(root)
+        if not changed:
+            return {"ok": False, "level": 0, "message": "[harness] No files were changed; there is nothing to verify."}
+        if task.baseline.get("tests_failed"):
+            return {"ok": True, "level": 5,
+                    "message": f"[harness] fail-to-pass: {task.baseline['tests_failed']} test(s) failed before the change; the suite now passes."}
+        tests = [f for f in changed if _is_test(f) and f.endswith(".py")]
+        if not tests:
+            return {"ok": False, "level": 1, "message": (
+                "[harness] The existing tests already passed before your change, so passing them proves nothing about "
+                "this issue. Add or update a test that fails without your fix and passes with it.")}
+        sources = [f for f in changed if f not in tests]
+        with base_sources(root, sources):
+            base_results = {t: tools.run_test(target=t) for t in tests}
+        failing_on_base = [t for t, r in base_results.items() if not r["ok"]]
+        if failing_on_base:
+            return {"ok": True, "level": 5,
+                    "message": f"[harness] fail-to-pass: {failing_on_base} fail on the base code and pass with the change."}
+        return {"ok": False, "level": 1, "message": (
+            f"[harness] Your new/updated tests {tests} also pass WITHOUT your source change, so they do not "
+            "demonstrate the fix. Make the test exercise the reported behavior.")}
 
     def _review(self, task: TaskState) -> None:
         transition(task, TaskStatus.REVIEWING)
@@ -413,7 +456,7 @@ class Orchestrator:
 
 def _failure_signature(text: str) -> str:
     """Normalize test output so timings and addresses don't make identical failures look different."""
-    keep = [line for line in text.splitlines() if re.search(r"(FAIL|ERROR|Error|assert|failed)", line)]
+    keep = [line for line in text.splitlines() if re.search(r"(FAIL|ERROR|Error|assert|failed|\[harness\])", line)]
     sig = "\n".join(keep[-12:])
     sig = re.sub(r"\d+\.\d+s", "", sig)
     return re.sub(r"0x[0-9a-f]+", "", sig)

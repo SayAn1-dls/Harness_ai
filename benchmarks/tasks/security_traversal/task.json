@@ -1,0 +1,6 @@
+{
+  "id": "security_traversal",
+  "category": "security-sensitive",
+  "expect": "resolve",
+  "objective": "Path traversal in read_upload"
+}

@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -368,6 +369,38 @@ def workspace_diff(root: Path) -> str:
     subprocess.run(["git", "add", "-A", "-N", "--", ".", ":!harness"], cwd=root, capture_output=True)
     proc = subprocess.run(["git", "diff", "--", ".", ":!harness"], cwd=root, text=True, capture_output=True)
     return proc.stdout
+
+
+def changed_files(root: Path) -> list[str]:
+    """Tracked and new files that differ from HEAD, excluding harness state."""
+    subprocess.run(["git", "add", "-A", "-N", "--", ".", ":!harness"], cwd=root, capture_output=True)
+    proc = subprocess.run(["git", "diff", "--name-only", "--", ".", ":!harness"], cwd=root, text=True, capture_output=True)
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+@contextmanager
+def base_sources(root: Path, paths: list[str]):
+    """Temporarily put `paths` back to their HEAD versions (new files are removed), then restore."""
+    saved: dict[str, bytes | None] = {}
+    try:
+        for rel in paths:
+            f = root / rel
+            saved[rel] = f.read_bytes() if f.exists() else None
+            head = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=root, capture_output=True)
+            if head.returncode == 0:
+                f.write_bytes(head.stdout)
+            elif f.exists():
+                f.unlink()
+        yield
+    finally:
+        for rel, data in saved.items():
+            f = root / rel
+            if data is None:
+                if f.exists():
+                    f.unlink()
+            else:
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_bytes(data)
 
 
 def parse_test_counts(output: str) -> tuple[int, int]:

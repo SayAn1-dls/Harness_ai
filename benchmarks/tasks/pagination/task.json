@@ -1,0 +1,6 @@
+{
+  "id": "pagination",
+  "category": "simple",
+  "expect": "resolve",
+  "objective": "paginate() is off by one page"
+}

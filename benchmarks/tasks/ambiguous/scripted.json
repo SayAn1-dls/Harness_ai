@@ -1,0 +1,16 @@
+{
+  "intake": [
+    {
+      "problem": "unclear",
+      "intent": "unclear",
+      "requirements": [],
+      "acceptance_criteria": [],
+      "constraints": [],
+      "ambiguities": [],
+      "blocking_ambiguities": [
+        "What is wrong with the prices and what should they be?"
+      ],
+      "risk": "medium"
+    }
+  ]
+}

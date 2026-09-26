@@ -1,0 +1,6 @@
+{
+  "id": "multi_file",
+  "category": "multi-file",
+  "expect": "resolve",
+  "objective": "Support EUR in prices and invoices"
+}

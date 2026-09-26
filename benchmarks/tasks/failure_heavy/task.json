@@ -1,0 +1,6 @@
+{
+  "id": "failure_heavy",
+  "category": "failure-heavy",
+  "expect": "resolve",
+  "objective": "word_count should count hyphenated parts separately"
+}

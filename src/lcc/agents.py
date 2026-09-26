@@ -320,6 +320,13 @@ def coder_task_prompt(task: TaskState, plan: ImplementationPlan, diff: str) -> s
         f"Plan v{plan.version}:\n" + "\n".join(f"{s.order}. {s.action} {s.files or ''}" for s in plan.steps),
         f"Allowed files: {plan.allowed_files or 'any (keep it minimal)'}",
     ]
+    if task.baseline:
+        b = task.baseline
+        line = f"Baseline before any change: tests_run={b.get('tests_run')} failed={b.get('tests_failed')}."
+        if not b.get("tests_failed"):
+            line += (" The existing suite does not catch this issue, so you MUST add or update a test that fails"
+                     " without your fix and passes with it; the verifier checks this.")
+        lines.append(line)
     if task.history:
         lines.append(f"This is attempt {task.iteration}. Previous attempts (do not repeat them):\n" + _history_text(task))
     if task.last_failure and task.iteration > 1:

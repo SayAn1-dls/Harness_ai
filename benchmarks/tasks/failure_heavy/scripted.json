@@ -1,0 +1,71 @@
+{
+  "coder": [
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "textutil.py",
+          "old_str": "    return text.split()\n",
+          "new_str": "    return [w for w in text.replace(\"-\", \" \").split() if w]\n"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "tests/test_textutil.py",
+          "old_str": "    def test_title_case_keeps_hyphenated_words(self):",
+          "new_str": "    def test_word_count_hyphen_parts(self):\n        self.assertEqual(word_count(\"state-of-the-art design\"), 5)\n        self.assertEqual(word_count(\"-well--known-\"), 2)\n\n    def test_title_case_keeps_hyphenated_words(self):"
+        }
+      }
+    ],
+    [
+      {
+        "name": "finish",
+        "arguments": {
+          "summary": "done"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "textutil.py",
+          "old_str": "    return [w for w in text.replace(\"-\", \" \").split() if w]\n",
+          "new_str": "    return text.split()\n"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "textutil.py",
+          "old_str": "    return len(split_words(text))\n",
+          "new_str": "    return len([p for w in split_words(text) for p in w.split(\"-\") if p])\n"
+        }
+      }
+    ],
+    [
+      {
+        "name": "finish",
+        "arguments": {
+          "summary": "done"
+        }
+      }
+    ]
+  ],
+  "recovery": [
+    {
+      "class": "WRONG_ASSUMPTION",
+      "action": "patch",
+      "failed_assumption": "split_words is only used by word_count",
+      "guidance": "title_case relies on split_words keeping hyphens; change word_count only",
+      "files_to_inspect": [
+        "textutil.py"
+      ]
+    }
+  ]
+}
