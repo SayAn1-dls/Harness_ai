@@ -274,8 +274,11 @@ class ToolRegistry:
         if not file.is_file():
             raise ToolError(f"no such file: {path}")
         lines = file.read_text(encoding="utf-8", errors="replace").splitlines()
-        sl = max(1, int(start or 1))
-        el = min(len(lines), int(end or sl + READ_WINDOW - 1), sl + READ_WINDOW - 1)
+        try:
+            sl = max(1, int(start or 1))
+            el = min(len(lines), int(end or sl + READ_WINDOW - 1), sl + READ_WINDOW - 1)
+        except (TypeError, ValueError) as exc:
+            raise ToolError("start and end must be line numbers (integers)") from exc
         numbered = "\n".join(f"{i:>4}| {lines[i - 1]}" for i in range(sl, el + 1))
         more = f"\n[... {len(lines) - el} more lines; call read_file with start={el + 1}]" if el < len(lines) else ""
         return {"path": path, "total_lines": len(lines), "content": numbered + more}
@@ -297,7 +300,7 @@ class ToolRegistry:
         file = self._before_write(path)
         if not file.is_file():
             raise ToolError(f"no such file: {path}; use write_file to create it")
-        text = file.read_text(encoding="utf-8")
+        text, encoding = _read_text(file)
         if not old_str:
             raise ToolError("old_str is empty; to create or overwrite a file use write_file")
         old_str = _strip_line_numbers(old_str, text)
@@ -317,7 +320,7 @@ class ToolRegistry:
         if new_text == text:
             raise ToolError("new_str is identical to old_str; nothing changed")
         _check_syntax(path, new_text)
-        file.write_text(new_text, encoding="utf-8")
+        file.write_text(new_text, encoding=encoding)
         self._after_write(path)
         line = text[: text.index(old_str)].count("\n") + 1
         lines = new_text.splitlines()
@@ -388,12 +391,34 @@ class ToolRegistry:
         res["ok"] = res["returncode"] == 0 and run > 0
         return res
 
-    def run_lint(self) -> dict[str, Any]:
+    def run_lint(self, paths: list[str] | None = None) -> dict[str, Any]:
+        """Syntax-level ruff errors (E9, F63, F7, F82) in `paths` (default: the whole repo). `diagnostics` is a
+        list of "path:code:message" so callers can compare against the base code instead of demanding a
+        lint-clean repository."""
         self._charge("run_lint")
         self.policy.require("run_tests")
         if importlib.util.find_spec("ruff") is None:
-            return {"ok": True, "skipped": True, "reason": "ruff not installed"}
-        return self._run([sys.executable, "-m", "ruff", "check", "--select", "E9,F63,F7,F82", "."])
+            return {"ok": True, "skipped": True, "reason": "ruff not installed", "diagnostics": []}
+        targets = [p for p in (paths if paths is not None else ["."]) if p == "." or (self.workspace / p).is_file()]
+        if not targets:
+            return {"ok": True, "skipped": True, "reason": "no Python files to lint", "diagnostics": []}
+        res = self._run([sys.executable, "-m", "ruff", "check", "--no-cache", "--isolated", "--output-format", "json",
+                         "--select", "E9,F63,F7,F82", *targets])
+        try:
+            rows = __import__("json").loads(res["stdout"] or "[]")
+        except ValueError:
+            return res | {"diagnostics": []}
+        diags = []
+        for r in rows:
+            try:
+                rel = Path(r["filename"]).resolve().relative_to(self.workspace).as_posix()
+            except (KeyError, ValueError):
+                rel = str(r.get("filename"))
+            diags.append(f"{rel}:{r.get('code')}:{r.get('message')}")
+        res["diagnostics"] = diags
+        res["stdout"] = "\n".join(f"{d.split(':', 2)[0]}: {d.split(':', 2)[1]} {d.split(':', 2)[2]}" for d in diags)
+        res["ok"] = not diags
+        return res
 
     def run_typecheck(self) -> dict[str, Any]:
         self.policy.require("run_tests")
@@ -423,6 +448,15 @@ class ToolRegistry:
             return {"ok": False, "cmd": shown, "returncode": 127, "stdout": "", "stderr": f"command not found: {exc}"}
         return {"ok": proc.returncode == 0, "cmd": shown, "returncode": proc.returncode,
                 "stdout": proc.stdout[-8000:], "stderr": proc.stderr[-8000:]}
+
+
+def _read_text(file: Path) -> tuple[str, str]:
+    """File text plus the encoding to write it back with (legacy latin-1 files must not be corrupted)."""
+    data = file.read_bytes()
+    try:
+        return data.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        return data.decode("latin-1"), "latin-1"
 
 
 def _glob_match(rel: str, glob: str) -> bool:
@@ -565,7 +599,7 @@ def parse_failed_ids(output: str) -> set[str]:
     """Identifiers of failing tests, so verification can compare against the baseline set instead of
     requiring a fully green suite."""
     ids: set[str] = set()
-    ids.update(re.findall(r"^(?:FAILED|ERROR) (\S+?)(?: - .*)?$", output, re.M))  # pytest -rfE
+    ids.update(re.findall(r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$", output, re.M))  # pytest -rfE (ids may hold spaces)
     ids.update(f"{name} ({where})" for name, where in re.findall(r"^(?:FAIL|ERROR): (\w+) \(([\w.]+)\)", output, re.M))
     ids.update(re.findall(r"^\s*--- FAIL: (\S+)", output, re.M))  # go
     ids.update(re.findall(r"^test (\S+) \.\.\. FAILED$", output, re.M))  # cargo

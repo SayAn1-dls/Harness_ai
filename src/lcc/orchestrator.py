@@ -68,6 +68,7 @@ class Orchestrator:
         self.last_changed: list[str] = []
         self.scope_expansions: list[str] = []
         self.scores_history: list[float] = []
+        self.review_rejections = 0
         self.intake_score = 0.0
 
     # ------------------------------------------------------------ main loop
@@ -122,7 +123,16 @@ class Orchestrator:
             task.global_score = score["total"]
             self.scores_history.append(task.global_score)
             self.store.save_sidecar("verification", {"score": score, "judge": judge.model_dump(mode="json")})
-            if judge.decision == JudgeDecision.PASS and ok:
+            passed = judge.decision == JudgeDecision.PASS and ok
+            if not passed and (task.iteration >= task.budget.max_iterations or task.budget.exhausted()):
+                # No attempt is left: a recovery diagnosis and a new plan would be tokens spent for nothing.
+                stop = StopCondition.MAX_ITERATIONS if task.iteration >= task.budget.max_iterations else StopCondition.BUDGET_EXCEEDED
+                task.stop_reason = stop.value
+                transition(task, TaskStatus.FAILED)
+                transition(task, TaskStatus.STOPPED)
+                self.store.emit(task, "TASK_STOPPED", result="fail", reason=stop.value)
+                return
+            if passed:
                 transition(task, TaskStatus.VERIFIED)
                 sha = Workspace(Path(task.workspace)).commit(f"lcc({task.task_id}): {task.objective[:60]}")
                 task.stop_reason = StopCondition.VERIFIED_SUCCESS.value
@@ -132,7 +142,7 @@ class Orchestrator:
                 self.store.save_task(task)
                 return
             self._recover(task, ok)
-            if task.status == TaskStatus.ESCALATED:
+            if task.status in {TaskStatus.ESCALATED, TaskStatus.STOPPED}:
                 return
 
     # ------------------------------------------------------------ phases
@@ -265,7 +275,7 @@ class Orchestrator:
         test_res = tools.run_test()
         if test_res.get("timed_out"):
             test_res = self._targeted_run(task, tools, test_res)
-        lint_res = tools.run_lint()
+        lint_res = self._lint_changes(task, tools)
         lint_ok = bool(lint_res.get("ok") or lint_res.get("skipped"))
         suite_ok, regress_note = self._suite_ok(task, test_res)
         ok = suite_ok and lint_ok
@@ -315,6 +325,23 @@ class Orchestrator:
         self.store.emit(task, "BASELINE", agent="verifier", result="pass" if res["ok"] else "fail",
                         **{k: v for k, v in task.baseline.items() if k != "failed_ids"},
                         failed_ids=task.baseline["failed_ids"][:20])
+
+    def _lint_changes(self, task: TaskState, tools: ToolRegistry) -> dict:
+        """Lint only the changed Python files, and fail only on errors the change introduced: a repository with
+        unrelated pre-existing lint errors must still be fixable."""
+        root = Path(task.workspace)
+        changed = [f for f in changed_files(root) if f.endswith(".py") and (root / f).is_file()]
+        if not changed:
+            return {"ok": True, "skipped": True, "reason": "no changed Python files", "diagnostics": []}
+        now = tools.run_lint(changed)
+        if now.get("skipped") or now.get("ok"):
+            return now
+        with base_sources(root, changed):
+            before = tools.run_lint(changed)
+        new = [d for d in now["diagnostics"] if d not in set(before.get("diagnostics") or [])]
+        now["ok"] = not new
+        now["stdout"] = "\n".join(f"new lint error: {d}" for d in new) if new else ""
+        return now
 
     def _suite_ok(self, task: TaskState, res: dict) -> tuple[bool, str]:
         """Pass-to-pass: the suite is green, or every test failing now was already failing at baseline."""
@@ -407,7 +434,11 @@ class Orchestrator:
     def _judge(self, task: TaskState, ok: bool):
         transition(task, TaskStatus.JUDGING)
         task.current_agent = "judge"
-        judge = run_judge(task, ok, self.findings, self.store)
+        # A model reviewer may send a tested, proven fix back once. After that its findings are advisory: an
+        # opinion must not override fail-to-pass evidence forever (false positives would burn every attempt).
+        judge = run_judge(task, ok, self.findings, self.store, allow_blocking=self.review_rejections < 1)
+        if judge.decision == JudgeDecision.ITERATE:
+            self.review_rejections += 1
         self.store.emit(task, "AGENT_COMPLETED", agent="judge", result=judge.decision.value, blocking=len(judge.blocking_findings))
         return judge
 
@@ -417,16 +448,26 @@ class Orchestrator:
         task.current_agent = "recovery"
         root = Path(task.workspace)
         diff = workspace_diff(root)
-        failure = self.last_verification.commands[0] if self.last_verification else {"stderr": task.last_failure or ""}
         if ok:  # tests passed but the judge found blocking issues
-            failure = {"stdout": "", "stderr": "Review blocking findings:\n" + "\n".join(
-                f"- {f.description}: {f.evidence[:2]}" for f in self.findings)}
-            task.last_failure = failure["stderr"]
-        rec = run_recovery(task, failure, diff, self.llm, self.store, self.findings)
+            task.last_failure = "Review blocking findings:\n" + "\n".join(
+                f"- {f.description}: {f.evidence[:2]}" for f in self.findings)
+        # The full verifier output: test results plus lint, regression and proof notes. The raw test command
+        # alone can be green when the real reason is a missing proof or a new lint error.
+        failure = {"stdout": task.last_failure or "", "stderr": ""}
 
         sig = _failure_signature((task.last_failure or "")[-1500:])
         prev_sig = _failure_signature(task.history[-1].new_observations[0]) if task.history and task.history[-1].new_observations else None
         task.repeated_failure_count = task.repeated_failure_count + 1 if sig and sig == prev_sig else 1
+        if task.repeated_failure_count >= 2:  # same failure twice: another diagnosis would repeat itself
+            task.history.append(IterationRecord(
+                iteration=task.iteration, previous_state=TaskStatus.JUDGING.value,
+                new_observations=[(task.last_failure or "")[-1500:]], changed_files=list(self.last_changed)))
+            task.stop_reason = StopCondition.SAME_FAILURE_REPEATED.value
+            transition(task, TaskStatus.STOPPED)
+            self.store.emit(task, "TASK_STOPPED", result="fail", reason=task.stop_reason)
+            self.store.save_task(task)
+            return
+        rec = run_recovery(task, failure, diff, self.llm, self.store, self.findings)
 
         record = IterationRecord(
             iteration=task.iteration,
@@ -532,9 +573,11 @@ class Orchestrator:
 
 
 def _failure_signature(text: str) -> str:
-    """Normalize test output so timings and addresses don't make identical failures look different."""
-    keep = [line for line in text.splitlines() if re.search(r"(FAIL|ERROR|Error|assert|failed|\[harness\])", line)]
-    sig = "\n".join(keep[-12:])
+    """Normalize test output so timings and addresses don't make identical failures look different. Output
+    without any failure keyword (lint errors, custom runners) falls back to its last non-empty lines."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    keep = [line for line in lines if re.search(r"(FAIL|ERROR|Error|error|assert|failed|\[harness\])", line)]
+    sig = "\n".join((keep or lines)[-12:])
     sig = re.sub(r"\d+\.\d+s", "", sig)
     return re.sub(r"0x[0-9a-f]+", "", sig)
 

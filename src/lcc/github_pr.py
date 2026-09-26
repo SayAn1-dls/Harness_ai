@@ -76,7 +76,7 @@ def open_pull_request(repo: Path, branch: str, title: str, body: str, *, draft: 
         remote, head = FORK_REMOTE, f"{login}:{remote_branch}"
     # gh supplies the credentials, whatever helper git is configured with.
     _run(["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
-          "push", "--force-with-lease", remote, f"{branch}:refs/heads/{remote_branch}"], repo)
+          "push", "--force", remote, f"{branch}:refs/heads/{remote_branch}"], repo)  # lcc/* branches are ours
     existing = _run(["gh", "pr", "list", "--repo", slug, "--head", remote_branch, "--state", "open",
                      "--json", "url", "--jq", ".[0].url"], repo, check=False)
     if existing:

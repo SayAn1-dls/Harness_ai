@@ -157,7 +157,8 @@ class BaseProvider:
 
     def structured_output(self, prompt: str, *, system: str = "", schema_hint: str = "", agent: str = "",
                           max_tokens: int = 2048) -> dict[str, Any]:
-        sys = f"{system}\nReturn ONLY one valid JSON object, no prose. Shape: {schema_hint}".strip()
+        # "json" in lowercase: DeepSeek and DashScope JSON mode require the word in the prompt.
+        sys = f"{system}\nReturn ONLY one valid json object (JSON), no prose. Shape: {schema_hint}".strip()
         messages = [{"role": "system", "content": sys}, {"role": "user", "content": prompt}]
         res = self._json_chat(messages, max_tokens, agent)
         data = parse_json_object(res.text)

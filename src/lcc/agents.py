@@ -35,6 +35,40 @@ ISSUE_CHARS = 8000  # long GitHub threads are cut here; the head and the tail ca
 def issue_text(task: TaskState, limit: int = ISSUE_CHARS) -> str:
     return truncate(task.issue_body or task.objective, limit)
 
+
+NONE_WORDS = {"", "none", "n/a", "na", "no", "nothing", "null", "-", "[]", "none.", "no ambiguities"}
+
+
+def as_list(value: Any) -> list:
+    """Models return a bare string, null or "none" where a list is expected; never iterate a string by character."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [] if value.strip().lower() in NONE_WORDS else [value]
+    if isinstance(value, dict):
+        return [value]
+    try:
+        return [v for v in value if not (isinstance(v, str) and v.strip().lower() in NONE_WORDS)]
+    except TypeError:
+        return [value]
+
+
+def as_float(value: Any, default: float) -> float:
+    words = {"very high": 0.95, "high": 0.85, "medium": 0.6, "moderate": 0.6, "low": 0.3, "very low": 0.1}
+    if isinstance(value, str) and value.strip().lower() in words:
+        return words[value.strip().lower()]
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def as_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
 CONTRACTS: dict[str, AgentContract] = {
     "intake": AgentContract(
         name="intake",
@@ -158,22 +192,22 @@ def run_intake(task: TaskState, provider: BaseProvider, store: HarnessStore, cri
         agent="intake",
     )
     criteria = []
-    for i, item in enumerate(data.get("acceptance_criteria") or [], 1):
+    for i, item in enumerate(as_list(data.get("acceptance_criteria")), 1):
         if isinstance(item, str):
             criteria.append(AcceptanceCriterion(id=f"AC-{i:02d}", text=item))
         elif isinstance(item, dict):
             criteria.append(AcceptanceCriterion(id=str(item.get("id") or f"AC-{i:02d}"), text=str(item.get("text") or item)))
-    reqs = [str(x) for x in data.get("requirements") or []]
-    ambiguities = [str(x) for x in data.get("ambiguities") or []]
+    reqs = [str(x) for x in as_list(data.get("requirements"))]
+    ambiguities = [str(x) for x in as_list(data.get("ambiguities"))]
     result = IntakeResult(
         problem=str(data.get("problem") or task.objective),
         intent=str(data.get("intent") or ""),
         requirements=reqs or [task.objective],
         acceptance_criteria=criteria or [AcceptanceCriterion(id="AC-01", text="The issue is resolved and tests pass")],
-        constraints=[str(x) for x in data.get("constraints") or []],
+        constraints=[str(x) for x in as_list(data.get("constraints"))],
         ambiguities=ambiguities,
-        blocking_ambiguities=[str(x) for x in data.get("blocking_ambiguities") or []],
-        risk=str(data.get("risk") or "low").lower(),
+        blocking_ambiguities=[str(x) for x in as_list(data.get("blocking_ambiguities"))],
+        risk=str(data.get("risk") or "low").lower() if str(data.get("risk") or "low").lower() in {"low", "medium", "high", "critical"} else "medium",
         score=_intake_score(data, criteria, reqs),
     )
     store.write_json("intake.json", result)
@@ -218,8 +252,7 @@ def run_context_agent(task: TaskState, provider: BaseProvider, tools: ToolRegist
         budget=task.budget,
         max_steps=CONTRACTS["context"].max_tool_calls,
     )
-    files = loop.finish_args.get("files") or []
-    return [str(f) for f in files if isinstance(f, str)]
+    return [str(f) for f in as_list(loop.finish_args.get("files")) if isinstance(f, str)]
 
 
 # ---------------------------------------------------------------- impact
@@ -273,13 +306,13 @@ def run_planner(
         agent="planner",
     )
     steps = []
-    for i, s in enumerate(data.get("steps") or [], 1):
+    for i, s in enumerate(as_list(data.get("steps")), 1):
         if isinstance(s, dict):
             steps.append(
                 PlanStep(
-                    order=int(s.get("order") or i),
+                    order=as_int(s.get("order"), i),
                     action=str(s.get("action") or s),
-                    files=[str(f) for f in s.get("files") or []],
+                    files=[str(f) for f in as_list(s.get("files"))],
                     verification=str(s.get("verification") or "tests"),
                 )
             )
@@ -290,8 +323,8 @@ def run_planner(
             PlanStep(order=1, action="Implement the objective with a minimal patch", files=task.affected_files),
             PlanStep(order=2, action="Add or update a regression test", verification="tests"),
         ]
-    allowed = [str(f) for f in data.get("allowed_files") or []] or sorted({f for s in steps for f in s.files})
-    forbidden = [str(f) for f in data.get("forbidden_files") or []]
+    allowed = [str(f) for f in as_list(data.get("allowed_files"))] or sorted({f for s in steps for f in s.files})
+    forbidden = [str(f) for f in as_list(data.get("forbidden_files"))]
     plan = ImplementationPlan(version=task.plan_version + 1, steps=steps, allowed_files=allowed, forbidden_files=forbidden)
     store.write_json(f"plan_v{plan.version}.json", plan)
     store.write_json("plan.json", plan)
@@ -458,11 +491,11 @@ def run_reviewer(
         agent="reviewer",
     )
     findings: list[Finding] = []
-    for i, f in enumerate(data.get("findings") or [], 1):
+    for i, f in enumerate(as_list(data.get("findings")), 1):
         if not isinstance(f, dict):
             continue
-        evidence = [str(e) for e in f.get("evidence") or []]
-        confidence = float(f.get("confidence") or 0.5)
+        evidence = [str(e) for e in as_list(f.get("evidence"))]
+        confidence = as_float(f.get("confidence"), 0.5)
         if not evidence:
             confidence = min(confidence, 0.5)  # no evidence, no high-confidence finding
         try:
@@ -525,11 +558,13 @@ def run_security(task: TaskState, diff: str, store: HarnessStore) -> list[Findin
     return findings
 
 
-def run_judge(task: TaskState, verification_ok: bool, findings: list[Finding], store: HarnessStore) -> JudgeResult:
+def run_judge(task: TaskState, verification_ok: bool, findings: list[Finding], store: HarnessStore,
+              allow_blocking: bool = True) -> JudgeResult:
     blocking = [
         f
         for f in findings
         if f.severity in {Severity.BLOCKER, Severity.CRITICAL, Severity.HIGH} and f.confidence >= 0.7 and f.evidence
+        and (allow_blocking or f.agent == "security")
     ]
     nonblocking = [f for f in findings if f not in blocking]
     if not verification_ok:
@@ -608,7 +643,7 @@ def run_recovery(
         "action": action.value,
         "failed_assumption": str(data.get("failed_assumption") or ""),
         "guidance": str(data.get("guidance") or data.get("notes") or ""),
-        "files_to_inspect": [str(f) for f in data.get("files_to_inspect") or []],
+        "files_to_inspect": [str(f) for f in as_list(data.get("files_to_inspect"))],
     }
     store.write_json(f"recovery_{task.iteration}.json", out)
     return out

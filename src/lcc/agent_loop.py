@@ -82,9 +82,15 @@ def run_tool_loop(
             messages.append({"role": "user", "content": NUDGE})
             continue
         idle_turns = 0
+        turn_failed = False
 
         for call in reply.tool_calls:
             result.tool_calls += 1
+            if call.name == "finish" and turn_failed:
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": (
+                    "finish ignored: an earlier tool call in this turn failed (see above). Fix that first, "
+                    "then call finish.")})
+                continue
             if call.name == "finish":
                 result.finished = True
                 result.finish_args = dict(call.arguments)
@@ -97,6 +103,8 @@ def run_tool_loop(
                 result.stop_reason = "repeated_tool_call"
                 return result
             observation, succeeded = _execute(tools, call.name, call.arguments, allowed)
+            if call.name in WRITE_TOOLS and not succeeded:
+                turn_failed = True
             if seen[key] == 2:
                 observation = (
                     "WARNING: you already made this exact call and nothing has changed since. "
@@ -175,6 +183,8 @@ def _execute(tools: ToolRegistry, name: str, args: dict[str, Any], allowed: list
         return f"ERROR: bad arguments for {name}: {exc}", False
     except OSError as exc:
         return f"ERROR: {exc}", False
+    except Exception as exc:  # noqa: BLE001 - a bad argument or tool bug must fail the call, never the task
+        return f"ERROR: {name} failed: {type(exc).__name__}: {exc}", False
     return truncate(_render(out)), out.get("ok") is not False
 
 

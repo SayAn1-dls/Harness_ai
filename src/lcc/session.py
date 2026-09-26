@@ -167,6 +167,41 @@ def prepare_node(repo: Path, console: Console) -> None:
                        capture_output=True, timeout=1800)
 
 
+TEST_EXTRAS = ("test", "tests", "testing", "dev")
+
+
+def declared_test_extras(repo: Path) -> tuple[list[str], list[str]]:
+    """Test-related optional-dependency extras and dependency groups the project declares."""
+    import configparser
+    import tomllib
+
+    extras: set[str] = set()
+    groups: set[str] = set()
+    pyproject = repo / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+            data = {}
+        extras |= set((data.get("project") or {}).get("optional-dependencies") or {})
+        extras |= set(((data.get("tool") or {}).get("poetry") or {}).get("extras") or {})
+        groups |= set(data.get("dependency-groups") or {})
+    cfg = repo / "setup.cfg"
+    if cfg.is_file():
+        parser = configparser.ConfigParser()
+        try:
+            parser.read(cfg, encoding="utf-8")
+            if parser.has_section("options.extras_require"):
+                extras |= set(parser.options("options.extras_require"))
+        except configparser.Error:
+            pass
+    setup_py = repo / "setup.py"
+    if setup_py.is_file():
+        text = setup_py.read_text(encoding="utf-8", errors="replace")
+        extras |= {e for e in TEST_EXTRAS if re.search(rf"['\"]{e}['\"]\s*:", text)}
+    return [e for e in TEST_EXTRAS if e in extras], [g for g in TEST_EXTRAS if g in groups]
+
+
 def prepare_env(repo: Path, venv: Path, console: Console) -> str | None:
     """Best-effort isolated venv with the target's dependencies so its tests can import it. Returns the python path."""
     try:
@@ -188,10 +223,13 @@ def prepare_env(repo: Path, venv: Path, console: Console) -> str | None:
                               cwd=repo, text=True, capture_output=True, timeout=1800)
         return proc.returncode == 0
 
-    if (repo / "pyproject.toml").exists() or (repo / "setup.py").exists():
-        for extra in ("[test]", "[tests]", "[testing]", "[dev]", ""):
-            if pip("-e", f".{extra}"):
-                break
+    if (repo / "pyproject.toml").exists() or (repo / "setup.py").exists() or (repo / "setup.cfg").exists():
+        # pip exits 0 for an extra the project does not declare, so pick from the declared ones.
+        extras, groups = declared_test_extras(repo)
+        if not (extras and pip("-e", f".[{','.join(extras)}]")):
+            pip("-e", ".")
+        for group in groups:  # PEP 735 dependency groups (pip >= 25.1); ignored by older pips
+            pip("--group", group)
     for req in REQ_FILES:
         if (repo / req).is_file():
             pip("-r", req)
@@ -248,17 +286,19 @@ def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console
     store.on_event = _progress(console)
     console.print(Panel.fit(f"[bold]{task_id}[/]  {issue.title}\nrepo: {repo}\nmodel: {provider.name}/{provider.model}", title="LCC"))
     t0 = time.monotonic()
+    fatal = False
     try:
         try:
             task = Orchestrator(store, provider, coder_max_steps=cfg.run.coder_max_steps,
                                 test_timeout=cfg.run.test_timeout).run(task)
         except ProviderError as exc:
             console.print(f"[red]model error:[/] {exc}")
+            fatal = exc.fatal
             task = store.load_task() or task
         except Exception as exc:
             console.print(f"[red]harness error:[/] {type(exc).__name__}: {exc}")
             task = store.load_task() or task
-        return report(task, store, cfg, console, round(time.monotonic() - t0, 1))
+        return report(task, store, cfg, console, round(time.monotonic() - t0, 1)) | {"fatal": fatal}
     finally:
         _restore_repo(repo, task, origin, stashed, console)
 
@@ -380,6 +420,8 @@ def is_repo_only(raw: str) -> bool:
     spec, _ = split_ref(raw)
     if Path(spec).expanduser().is_dir():
         return True
+    if Path(raw).expanduser().is_file():  # an issue file, e.g. issues/bug-12
+        return False
     return bool(re.match(r"^(?:https?://|git@|ssh://)", spec)) or bool(GH_REPO.fullmatch(spec) and "/" in spec
                                                                        and not Path(spec).suffix)
 
@@ -453,6 +495,9 @@ def auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, *
                 row["pr_error"] = str(exc)
                 console.print(f"[yellow]could not open the pull request:[/] {exc}")
         results.append(row)
+        if summary.get("fatal"):  # bad key / no balance: every remaining candidate would fail the same way
+            console.print("[red]stopping: the model account error affects every remaining fix[/]")
+            break
 
     out = {"repo": str(repo), "candidates": len(found), "fixed": sum(r["resolved"] for r in results),
            "discovery_tokens": counter.tokens, "total_tokens": counter.tokens + sum(r["tokens"] for r in results),

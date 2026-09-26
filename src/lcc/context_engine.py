@@ -78,32 +78,26 @@ class RepoIndex:
     reverse_graph: dict[str, set[str]] = field(default_factory=dict)
 
 
-def _skip_parts(rel_parts: tuple[str, ...]) -> bool:
-    for part in rel_parts[:-1]:
-        if part in SKIP_DIRS:
-            return True
-        if part.startswith(".") and part not in PROTECTED_DOTDIRS:
-            return True
-    return False
-
-
 def _rel(root: Path, path: Path) -> str:
     return path.resolve().relative_to(root.resolve()).as_posix()
+
+
+def _walk(root: Path):
+    """Sorted walk that prunes skipped directories instead of descending into them (node_modules can hold
+    hundreds of thousands of files)."""
+    import os
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and (not d.startswith(".") or d in PROTECTED_DOTDIRS))
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
 
 
 def scan_repo(root: Path, max_files: int = 4000) -> RepoIndex:
     root = Path(root).resolve()
     index = RepoIndex(root=root)
     count = 0
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            rel_parts = path.relative_to(root).parts
-        except ValueError:
-            continue
-        if _skip_parts(rel_parts):
-            continue
+    for path in _walk(root):
         if path.suffix.lower() not in CODE_SUFFIXES and path.name not in {
             "Makefile",
             "Dockerfile",
@@ -132,16 +126,16 @@ def scan_repo(root: Path, max_files: int = 4000) -> RepoIndex:
     return index
 
 
+TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "testing"}
+TEST_NAME = re.compile(
+    r"(^test_.*\.py$|_test\.(py|go|rs|rb)$|_spec\.rb$|\.(test|spec)\.(js|jsx|ts|tsx|mjs|cjs)$|(Test|Tests|IT)\.(java|kt|cs)$)"
+)
+
+
 def _is_test(rel: str) -> bool:
-    name = Path(rel).name.lower()
-    return (
-        "/test" in f"/{rel.lower()}"
-        or name.startswith("test_")
-        or name.endswith("_test.py")
-        or name.endswith(".test.ts")
-        or name.endswith(".spec.ts")
-        or name.endswith("_test.go")
-    )
+    """Test file by directory (tests/, __tests__/, spec/ ...) or by the naming conventions of each ecosystem."""
+    parts = Path(rel).parts
+    return any(p.lower() in TEST_DIRS for p in parts[:-1]) or bool(TEST_NAME.search(parts[-1] if parts else rel))
 
 
 def _extract_all(index: RepoIndex) -> None:

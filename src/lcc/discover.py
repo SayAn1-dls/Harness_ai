@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lcc.agents import as_list
 from lcc.context_engine import _is_test, pagerank, scan_repo
 from lcc.model import BaseProvider
 from lcc.schemas import Budget
@@ -198,7 +199,7 @@ def from_model_audit(repo: Path, provider: BaseProvider, *, calls: int = 2, char
         prompt = "\n\n".join(f"### {rel}\n{body}" for rel, body in chunk)
         data = provider.structured_output(prompt, system=AUDIT_SYSTEM, schema_hint=AUDIT_SCHEMA, agent="auditor")
         known = {rel for rel, _ in chunk}
-        for f in data.get("findings") or []:
+        for f in as_list(data.get("findings")):
             if not isinstance(f, dict):
                 continue
             rel = str(f.get("file") or "").lstrip("./")
