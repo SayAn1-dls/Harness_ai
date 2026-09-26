@@ -1,0 +1,6 @@
+---
+description: LCC harness operating rules for Cursor
+alwaysApply: true
+---
+
+Treat `harness/state/task_state.json` as the source of truth. Do not spawn recursive subagents. Respect budgets. Never commit secrets. Never merge to main. After a session, regenerate `harness/docs/HANDOFF.md` from state rather than free-rewriting architecture docs.

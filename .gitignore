@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.env
+harness/state/task_state.json
+harness/state/context_state.json
+harness/state/agent_state.json
+harness/state/verification_state.json
+harness/state/events.jsonl
+harness/artifacts/
+harness/cache/
+*.tmp
+.DS_Store
