@@ -36,7 +36,23 @@ lcc status
 lcc handoff
 ```
 
-Set `LCC_PROVIDER=openai_compat` plus `LCC_API_KEY`, `LCC_BASE_URL`, and `LCC_MODEL` to use Grok, Claude-compatible, or OpenAI gateways. Default provider is `mock` (offline).
+### Providers
+
+Copy `.env.example` to `.env` and set `LCC_PROVIDER` to `deepseek` or `gemini`, with `DEEPSEEK_API_KEY` or `GEMINI_API_KEY`. `openai` and `grok` presets also exist. Any OpenAI-compatible gateway works via `LCC_BASE_URL` + `LCC_MODEL` + `LCC_API_KEY`. The default provider is `mock` (offline, keyword heuristics only).
+
+### Benchmark
+
+```bash
+lcc bench -p scripted          # offline smoke test of the pipeline
+lcc bench -p deepseek          # live run; grades each task with a hidden check
+lcc bench -p gemini -t failure_heavy -t missing_context
+```
+
+Results go to `benchmarks/results/*.jsonl`: resolved, iterations, tokens, tool calls, runtime, and **verified resolutions per 1M tokens**.
+
+### What "verified" means
+
+Tests pass **and** there is proof the change fixes something: previously failing tests now pass, or new or changed tests fail on the base code and pass with the change. A green suite on unchanged behavior is not verification.
 
 Default merge permission is **denied**. After `HUMAN_REVIEW`, run `lcc approve` then `lcc pr`.
 

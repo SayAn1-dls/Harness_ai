@@ -216,3 +216,29 @@ def test_test_that_passes_on_base_is_rejected_then_real_test_accepted(tmp_path):
     assert "also pass WITHOUT your source change" in task.history[0].new_observations[0]
     assert task.verification["proof_level"] == 5
     assert "return -x if x < 0 else x" in (root / "absval.py").read_text()  # source restored after base run
+
+
+# ---------------------------------------------------------------- efficiency
+def test_compaction_keeps_recent_and_pairing():
+    from lcc.agent_loop import compact
+
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    for i in range(10):
+        msgs.append({"role": "assistant", "content": None, "tool_calls": [{"id": f"c{i}"}]})
+        msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": f"obs {i}\n" + "x" * 4000})
+    n = compact(msgs, limit=5000, keep=3)
+    tools = [m for m in msgs if m["role"] == "tool"]
+    assert n > 0 and tools[0]["content"].startswith("[compacted") and "obs 0" in tools[0]["content"]
+    assert all(not t["content"].startswith("[compacted") for t in tools[-3:])
+    assert len(tools) == 10
+
+
+def test_routing_picks_models():
+    from lcc.routing import RoutedProvider
+
+    task = TaskState(task_id="T", repository="r", workspace=".", objective="x")
+    fast, strong, default = MockProvider(), MockProvider(), MockProvider()
+    r = RoutedProvider(default, task, fast=fast, strong=strong)
+    assert r.pick("intake") is fast and r.pick("coder") is default
+    task.lane = task.lane.C
+    assert r.pick("coder") is strong

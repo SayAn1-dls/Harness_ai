@@ -23,6 +23,7 @@ from lcc.context_engine import persist_index, repo_map, retrieve, scan_repo, sna
 from lcc.eval import global_task_score
 from lcc.lanes import complexity_score, select_lane
 from lcc.metering import MeteredProvider
+from lcc.routing import maybe_route
 from lcc.model import BaseProvider, get_provider
 from lcc.rules_engine import discover_rules, rules_for_paths
 from lcc.schemas import (
@@ -69,7 +70,7 @@ class Orchestrator:
     # ------------------------------------------------------------ main loop
     def run(self, task: TaskState, until_human: bool = True) -> TaskState:
         started = time.monotonic()
-        self.llm = MeteredProvider(self.raw_provider, self.store, task, started)
+        self.llm = MeteredProvider(maybe_route(self.raw_provider, task), self.store, task, started)
         workspace = Workspace(Path(task.workspace))
         task.base_commit = workspace.ensure_git()
         workspace.create_task_branch(task)

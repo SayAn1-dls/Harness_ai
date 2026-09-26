@@ -11,6 +11,8 @@ from lcc.schemas import Budget
 from lcc.tools import WRITE_TOOLS, ToolBudgetExceeded, ToolError, ToolRegistry
 
 MAX_OBSERVATION_CHARS = 6000
+CONTEXT_TOKEN_LIMIT = 24_000  # per-agent working context before old observations are compacted
+KEEP_RECENT_OBSERVATIONS = 6
 NUDGE = "You must act through tools. Continue the task, or call `finish` with a summary if you are done."
 
 
@@ -44,6 +46,7 @@ def run_tool_loop(
     budget: Budget,
     max_steps: int = 30,
     max_tokens: int = 4096,
+    context_limit: int = CONTEXT_TOKEN_LIMIT,
 ) -> LoopResult:
     allowed = [n for n in dict.fromkeys(allowed + ["finish"]) if n in tools.specs]
     schemas = tools.schemas(allowed)
@@ -58,6 +61,7 @@ def run_tool_loop(
         if budget.exhausted():
             result.stop_reason = "budget_exceeded"
             return result
+        compact(messages, context_limit)
         reply = provider.chat(messages, tools=schemas, max_tokens=max_tokens, agent=agent)
         messages.append(reply.assistant_message())
 
@@ -101,6 +105,27 @@ def run_tool_loop(
 
     result.stop_reason = "max_steps"
     return result
+
+
+def _tokens(messages: list[dict[str, Any]]) -> int:
+    return sum(len(str(m.get("content") or "")) + len(str(m.get("tool_calls") or "")) for m in messages) // 4
+
+
+def compact(messages: list[dict[str, Any]], limit: int, keep: int = KEEP_RECENT_OBSERVATIONS) -> int:
+    """Replace old tool observations with one-line stubs once the working context exceeds `limit` tokens.
+    Deterministic (no model call) and keeps tool_call/tool pairing intact. Returns the number compacted."""
+    if _tokens(messages) <= limit:
+        return 0
+    tool_idx = [i for i, m in enumerate(messages) if m["role"] == "tool" and not str(m["content"]).startswith("[compacted")]
+    n = 0
+    for i in tool_idx[:-keep] if keep else tool_idx:
+        content = str(messages[i]["content"])
+        first = content.splitlines()[0][:160] if content else ""
+        messages[i]["content"] = f"[compacted {len(content)} chars; re-run the tool if needed] {first}"
+        n += 1
+        if _tokens(messages) <= limit:
+            break
+    return n
 
 
 def _execute(tools: ToolRegistry, name: str, args: dict[str, Any], allowed: list[str]) -> tuple[str, bool]:
