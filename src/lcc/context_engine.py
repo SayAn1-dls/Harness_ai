@@ -273,57 +273,61 @@ def retrieve(
     token_budget: int = 12000,
     extra_files: Iterable[str] = (),
 ) -> ContextSnapshot:
+    """Exact symbols -> token overlap -> one-hop dependencies -> tests -> compress into packets."""
     q = _tokenize(query)
-    scores: dict[str, float] = {}
+    texts: dict[str, str] = {}
+    toks: dict[str, set[str]] = {}
     for rel in index.files:
-        path = index.root / rel
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")[:80_000]
+            texts[rel] = (index.root / rel).read_text(encoding="utf-8", errors="replace")[:80_000]
         except OSError:
             continue
-        tokens = _tokenize(text)
+        toks[rel] = _tokenize(texts[rel])
+
+    sym_hits = {s.name.lower() for s in index.symbols} & q
+    scores: dict[str, float] = {}
+    for rel, tokens in toks.items():
         overlap = len(q & tokens)
         name_bonus = 8 if any(t in rel.lower() for t in q) else 0
+        defines = sum(15 for s in index.symbols if s.path == rel and s.name.lower() in sym_hits)
         test_bonus = 3 if rel in index.tests and overlap else 0
-        scores[rel] = overlap + name_bonus + test_bonus
+        doc_penalty = 0.5 if rel.endswith((".md", ".json", ".yml", ".yaml", ".toml")) else 1.0
+        scores[rel] = (overlap + name_bonus + defines + test_bonus) * doc_penalty
     for extra in extra_files:
         if extra in scores:
-            scores[extra] += 20
-        elif extra in index.files:
-            scores[extra] = 20
-    ranked = sorted(scores, key=lambda f: scores[f], reverse=True)
+            scores[extra] += 25
+    # one hop: pull in direct dependencies and dependents of strong candidates
+    top = sorted((f for f in scores if scores[f] > 0), key=lambda f: scores[f], reverse=True)[:5]
+    for f in top:
+        for dep in index.graph.get(f, set()) | index.reverse_graph.get(f, set()):
+            if dep in scores:
+                scores[dep] += max(2.0, scores[f] * 0.3)
+
+    ranked = sorted((f for f in scores if scores[f] > 0), key=lambda f: scores[f], reverse=True)
     packets: list[ContextPacket] = []
     files: list[str] = []
     used = 0
     selected_syms: list[str] = []
     tests: list[str] = []
     for rel in ranked:
-        if scores[rel] <= 0:
-            continue
-        path = index.root / rel
-        text = path.read_text(encoding="utf-8", errors="replace")
-        excerpt = text[:4000]
+        excerpt = texts[rel][:6000]
         cost = max(32, len(excerpt) // 4)
         if used + cost > token_budget:
             excerpt = excerpt[: max(400, (token_budget - used) * 4)]
             cost = max(16, len(excerpt) // 4)
             if used + cost > token_budget:
                 break
-        packets.append(ContextPacket(path=rel, reason=f"score={scores[rel]}", excerpt=excerpt, token_estimate=cost))
+        packets.append(ContextPacket(path=rel, reason=f"score={scores[rel]:.1f}", excerpt=excerpt, token_estimate=cost))
         files.append(rel)
         used += cost
         selected_syms.extend(f"{s.kind}:{s.name}" for s in index.symbols if s.path == rel)
         if rel in index.tests:
             tests.append(rel)
-        # traverse one hop of dependencies
-        for dep in list(index.graph.get(rel, set()))[:3]:
-            if dep not in files and used < token_budget * 0.9:
-                extra = extra_files  # noqa: F841
         if len(files) >= 24:
             break
 
     snapshot_id = "ctx_" + hashlib.sha1(f"{query}|{','.join(files)}".encode()).hexdigest()[:10]
-    metric = _score_snapshot(files, selected_syms, tests, rules, index, used, token_budget, query)
+    metric = _score_snapshot(files, ranked, toks, tests, rules, index, used, token_budget, q, sym_hits)
     return ContextSnapshot(
         snapshot_id=snapshot_id,
         created_at=utcnow(),
@@ -334,48 +338,53 @@ def retrieve(
         rules=rules,
         packets=packets,
         scores=metric,
-        notes=["retrieve: exact overlap + name bonus + tests"],
+        notes=["retrieve: symbols + overlap + one-hop deps + tests"],
     )
 
 
 def _score_snapshot(
     files: list[str],
-    symbols: list[str],
+    ranked: list[str],
+    toks: dict[str, set[str]],
     tests: list[str],
     rules: list[str],
     index: RepoIndex,
     used: int,
     budget: int,
-    query: str,
+    q: set[str],
+    sym_hits: set[str],
 ) -> dict[str, float]:
-    q = _tokenize(query)
-    rel_files = min(20, len(files)) / 20 * 20
-    rel_syms = min(15, len(symbols) / 4) / 15 * 15 if symbols else 0
-    dep_cov = 0.0
-    if files:
-        covered = 0
-        needed = 0
-        for f in files:
-            deps = index.graph.get(f, set())
-            needed += len(deps)
-            covered += sum(1 for d in deps if d in files)
-        dep_cov = (covered / needed * 15) if needed else 10
-    req = min(15.0, len(q & _tokenize(" ".join(files))) / max(1, len(q)) * 15)
-    rule_cov = 10 if rules else 5
-    test_cov = min(10.0, len(tests) * 3)
-    hist = 3.0
+    """Blueprint weights: files 20, symbols 15, deps 15, requirements 15, rules 10, tests 10, history 5, tokens 10."""
+    chosen = set(files)
+    want = ranked[: min(5, len(ranked))]
+    rel_files = 20 * (sum(1 for f in want if f in chosen) / len(want)) if want else 0.0
+    found_syms = {s.name.lower() for s in index.symbols if s.path in chosen} & sym_hits
+    rel_syms = 15 * (len(found_syms) / len(sym_hits)) if sym_hits else 10.0
+    needed = covered = 0
+    for f in files[:8]:
+        deps = index.graph.get(f, set())
+        needed += len(deps)
+        covered += sum(1 for d in deps if d in chosen)
+    dep_cov = 15 * covered / needed if needed else 15.0
+    repo_vocab = set().union(*toks.values()) if toks else set()
+    answerable = q & repo_vocab
+    covered_q = answerable & set().union(*(toks[f] for f in files if f in toks)) if files else set()
+    req = 15 * len(covered_q) / len(answerable) if answerable else 0.0
+    rule_cov = 10.0
+    test_cov = 10.0 if tests or not index.tests else 0.0
+    hist = 3.0  # history engine not implemented yet
     efficiency = max(0.0, 10 - (used / max(1, budget)) * 4)
     parts = {
-        "relevant_files": rel_files,
-        "relevant_symbols": min(15.0, rel_syms),
-        "dependency_coverage": min(15.0, dep_cov),
-        "requirement_coverage": req,
-        "rule_coverage": float(rule_cov),
+        "relevant_files": round(rel_files, 2),
+        "relevant_symbols": round(rel_syms, 2),
+        "dependency_coverage": round(dep_cov, 2),
+        "requirement_coverage": round(req, 2),
+        "rule_coverage": rule_cov,
         "test_coverage": test_cov,
         "historical_relevance": hist,
-        "token_efficiency": min(10.0, efficiency),
+        "token_efficiency": round(efficiency, 2),
     }
-    parts["total"] = sum(v for k, v in parts.items() if k != "total")
+    parts["total"] = round(sum(parts.values()), 2)
     return parts
 
 

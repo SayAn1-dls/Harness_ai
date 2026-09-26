@@ -123,17 +123,22 @@ class GitHubPermission(str, Enum):
 
 
 class Budget(BaseModel):
-    tokens: int = 100_000
+    tokens: int = 300_000
     tokens_used: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tokens_cached: int = 0
+    model_calls: int = 0
+    tool_calls: int = 0
     runtime_seconds: int = 1800
     runtime_used_seconds: float = 0
     max_iterations: int = 5
     max_parallel_agents: int = 3
     max_agent_depth: int = 1
-    max_search_calls: int = 20
-    max_file_reads: int = 50
-    max_shell_calls: int = 40
-    max_full_test_runs: int = 5
+    max_search_calls: int = 60
+    max_file_reads: int = 100
+    max_shell_calls: int = 60
+    max_full_test_runs: int = 20
     search_calls: int = 0
     file_reads: int = 0
     shell_calls: int = 0
@@ -238,6 +243,7 @@ class IntakeResult(BaseModel):
     acceptance_criteria: list[AcceptanceCriterion] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     ambiguities: list[str] = Field(default_factory=list)
+    blocking_ambiguities: list[str] = Field(default_factory=list)
     risk: str = "low"
     score: float = 0
 
@@ -314,6 +320,7 @@ class TaskState(BaseModel):
     potentially_affected_files: list[str] = Field(default_factory=list)
     plan_version: int = 0
     iteration: int = 0
+    history: list[IterationRecord] = Field(default_factory=list)
     agents: list[AgentInvocation] = Field(default_factory=list)
     verification: dict[str, Any] = Field(default_factory=dict)
     budget: Budget = Field(default_factory=Budget)

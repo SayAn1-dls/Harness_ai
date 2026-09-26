@@ -18,7 +18,7 @@ class Workspace:
             proc = subprocess.run(["git", "init", "-b", "main"], cwd=self.path, capture_output=True)
             if proc.returncode != 0:
                 subprocess.run(["git", "init"], cwd=self.path, check=True, capture_output=True)
-            subprocess.run(["git", "add", "-A"], cwd=self.path, capture_output=True)
+            subprocess.run(["git", "add", "-A", "--", ".", ":!harness"], cwd=self.path, capture_output=True)
             self._commit("lcc: workspace snapshot")
         return self.head()
 
@@ -66,12 +66,21 @@ class Workspace:
             raise RuntimeError(f"git commit failed: {proc.stderr or proc.stdout}")
 
     def commit(self, message: str) -> str:
-        subprocess.run(["git", "add", "-A"], cwd=self.path, capture_output=True)
+        """Commit task changes on the task branch. Harness state is never committed."""
+        if self.current_branch() in {"main", "master", "trunk"}:
+            raise ToolError("refusing to commit on a protected branch")
+        subprocess.run(["git", "add", "-A", "--", ".", ":!harness"], cwd=self.path, capture_output=True)
         self._commit(message)
         return self.head()
 
+    def current_branch(self) -> str:
+        proc = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=self.path, text=True, capture_output=True)
+        return proc.stdout.strip()
+
     def reset_hard(self, rev: str) -> None:
+        """Discard the attempt: tracked changes and files the agent created (harness state is kept)."""
         subprocess.run(["git", "reset", "--hard", rev], cwd=self.path, check=True, capture_output=True)
+        subprocess.run(["git", "clean", "-fd", "-e", "harness"], cwd=self.path, capture_output=True)
 
 
 def assert_not_main(branch: str) -> None:

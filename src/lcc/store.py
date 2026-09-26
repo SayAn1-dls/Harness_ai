@@ -178,13 +178,16 @@ Repeated failure count: {task.repeated_failure_count}
 
 ## Budget
 
-tokens: {task.budget.tokens_used}/{task.budget.tokens}
+tokens: {task.budget.tokens_used}/{task.budget.tokens} (in {task.budget.tokens_in}, out {task.budget.tokens_out}, cached {task.budget.tokens_cached})
+model calls: {task.budget.model_calls}, tool calls: {task.budget.tool_calls}
+runtime: {task.budget.runtime_used_seconds}s
 iterations: {task.iteration}/{task.budget.max_iterations}
 stop_reason: {task.stop_reason or "n/a"}
 
 Generated at: {utcnow().isoformat()}
 """
-    path = store.docs / "HANDOFF.md"
+    # Per-task handoff lives with the task's artifacts so a run never clobbers the project's own docs/HANDOFF.md.
+    path = store.artifacts / "HANDOFF.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path

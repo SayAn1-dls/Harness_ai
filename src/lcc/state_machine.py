@@ -5,7 +5,7 @@ from lcc.schemas import TaskStatus, TaskState
 LEGAL_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.RECEIVED: {TaskStatus.ANALYZING, TaskStatus.STOPPED},
     TaskStatus.ANALYZING: {TaskStatus.CONTEXT_BUILDING, TaskStatus.ESCALATED, TaskStatus.STOPPED},
-    TaskStatus.CONTEXT_BUILDING: {TaskStatus.RULE_RESOLUTION, TaskStatus.STOPPED},
+    TaskStatus.CONTEXT_BUILDING: {TaskStatus.RULE_RESOLUTION, TaskStatus.ESCALATED, TaskStatus.STOPPED},
     TaskStatus.RULE_RESOLUTION: {TaskStatus.IMPACT_ANALYSIS, TaskStatus.PLANNING, TaskStatus.STOPPED},
     TaskStatus.IMPACT_ANALYSIS: {TaskStatus.PLANNING, TaskStatus.STOPPED},
     TaskStatus.PLANNING: {TaskStatus.PLAN_VALIDATION, TaskStatus.STOPPED},

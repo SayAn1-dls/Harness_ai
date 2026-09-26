@@ -24,7 +24,7 @@ def test_e2e_mini_repo(tmp_path: Path):
     assert (dest / "app.py").read_text(encoding="utf-8").find("return a + b") >= 0
     assert result.status in {TaskStatus.HUMAN_REVIEW, TaskStatus.VERIFIED}
     assert store.events_path.exists()
-    assert (store.docs / "HANDOFF.md").exists()
+    assert (store.artifacts / "HANDOFF.md").exists()
     assert result.context_snapshot
     dumped = store.load_task()
     assert dumped is not None
