@@ -167,7 +167,8 @@ def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console
         os.environ.pop("LCC_TEST_PYTHON", None)
 
     store = HarnessStore(repo)
-    origin = _prepare_repo(repo)
+    origin, stashed = _prepare_repo(repo, console)
+    task_id = _fresh_task_id(repo, task_id)
     body = issue.body if not issue.url else f"{issue.url}\n\n{issue.body}"
     task = create_task(
         store, task_id, issue.title, repo, issue_body=body, repository=issue.repo_hint or str(repo),
@@ -177,43 +178,66 @@ def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console
     console.print(Panel.fit(f"[bold]{task_id}[/]  {issue.title}\nrepo: {repo}\nmodel: {provider.name}/{provider.model}", title="LCC"))
     t0 = time.monotonic()
     try:
-        task = Orchestrator(store, provider, coder_max_steps=cfg.run.coder_max_steps).run(task)
-    except ProviderError as exc:
-        console.print(f"[red]model error:[/] {exc}")
-        task = store.load_task() or task
-    except Exception as exc:
-        console.print(f"[red]harness error:[/] {type(exc).__name__}: {exc}")
-        task = store.load_task() or task
-    summary = report(task, store, cfg, console, round(time.monotonic() - t0, 1))
-    _restore_repo(repo, task, origin)
-    return summary
+        try:
+            task = Orchestrator(store, provider, coder_max_steps=cfg.run.coder_max_steps).run(task)
+        except ProviderError as exc:
+            console.print(f"[red]model error:[/] {exc}")
+            task = store.load_task() or task
+        except Exception as exc:
+            console.print(f"[red]harness error:[/] {type(exc).__name__}: {exc}")
+            task = store.load_task() or task
+        return report(task, store, cfg, console, round(time.monotonic() - t0, 1))
+    finally:
+        _restore_repo(repo, task, origin, stashed, console)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=repo, text=True, capture_output=True)
 
 
-def _prepare_repo(repo: Path) -> str:
-    """Keep harness state out of the target's git status and remember the branch to return to."""
+def _prepare_repo(repo: Path, console: Console) -> tuple[str, bool]:
+    """Keep harness state out of the target's git status, remember the branch to return to, and stash the
+    user's uncommitted changes so they are neither committed into the fix nor lost to a rollback."""
     Workspace(repo).ensure_git()
     exclude = repo / ".git" / "info" / "exclude"
     if exclude.parent.is_dir():
         text = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
         if "/harness/" not in text.split():
             exclude.write_text(text + ("" if text.endswith("\n") or not text else "\n") + "/harness/\n", encoding="utf-8")
-    return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-
-
-def _restore_repo(repo: Path, task: TaskState, origin: str) -> None:
-    """Park any unverified work as a commit on the task branch, then return to the original branch for the next issue."""
-    if not origin or origin == "HEAD" or not task.branch.startswith("agent/"):
-        return
-    if _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != task.branch:
-        return
+    origin = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    stashed = False
     if _git(repo, "status", "--porcelain", "--", ".", ":!harness").stdout.strip():
-        _git(repo, "add", "-A", "--", ".", ":!harness")
-        _git(repo, "-c", "user.name=lcc", "-c", "user.email=lcc@local", "commit", "-q", "-m", f"lcc: unverified attempt for {task.task_id}")
-    _git(repo, "checkout", "-q", origin)
+        proc = _git(repo, "-c", "user.name=lcc", "-c", "user.email=lcc@local",
+                    "stash", "push", "-u", "-q", "-m", "lcc: uncommitted changes before run", "--", ".", ":!harness")
+        if proc.returncode != 0:
+            raise RuntimeError(f"could not stash uncommitted changes: {proc.stderr.strip()[-300:]}")
+        stashed = True
+        console.print("[yellow]uncommitted changes stashed; they are restored after the run[/]")
+    return origin, stashed
+
+
+def _fresh_task_id(repo: Path, task_id: str) -> str:
+    """A re-run of the same issue gets its own branch so it starts from the original branch, not the last attempt."""
+    candidate, n = task_id, 1
+    while _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/agent/{candidate}").returncode == 0:
+        n += 1
+        candidate = f"{task_id}-{n}"
+    return candidate
+
+
+def _restore_repo(repo: Path, task: TaskState, origin: str, stashed: bool, console: Console) -> None:
+    """Park any unverified work as a commit on the task branch, return to the original branch, restore stashed changes."""
+    if origin and origin != "HEAD" and task.branch.startswith("agent/") \
+            and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == task.branch:
+        if _git(repo, "status", "--porcelain", "--", ".", ":!harness").stdout.strip():
+            _git(repo, "add", "-A", "--", ".", ":!harness")
+            _git(repo, "-c", "user.name=lcc", "-c", "user.email=lcc@local", "commit", "-q", "-m", f"lcc: unverified attempt for {task.task_id}")
+        _git(repo, "checkout", "-q", origin)
+    if stashed:
+        proc = _git(repo, "stash", "pop", "-q")
+        if proc.returncode != 0:
+            console.print(f"[red]could not restore your uncommitted changes automatically; they are kept in `git stash list`[/] "
+                          f"({proc.stderr.strip()[-200:]})")
 
 
 def report(task: TaskState, store: HarnessStore, cfg: Config, console: Console, elapsed: float) -> dict:
@@ -315,6 +339,9 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
     if not issue_arg and not sys.stdin.isatty():
         issue_arg = sys.stdin.read()  # piped: `make run < issue.md`
         once = True
+        if not issue_arg.strip():
+            console.print("[red]No issue given.[/] Pass ISSUE=<url|file|text>, pipe the issue on stdin, or run interactively.")
+            return 2
     status = 0
     while True:
         raw = issue_arg if issue_arg else _read_multiline(console)
@@ -342,7 +369,14 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
                 return 2
             issue_arg = None
             continue
-        summary = solve(issue, repo, cfg, provider, console)
+        try:
+            summary = solve(issue, repo, cfg, provider, console)
+        except Exception as exc:  # repository setup failed before the harness could run
+            console.print(f"[red]could not run on {repo}:[/] {exc}")
+            if not interactive:
+                return 2
+            issue_arg, repo_arg = None, None
+            continue
         status = 0 if summary["resolved"] or summary["status"] == TaskStatus.ESCALATED.value else 1
         if once or not interactive:
             return status

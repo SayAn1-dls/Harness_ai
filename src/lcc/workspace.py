@@ -18,6 +18,8 @@ class Workspace:
             proc = subprocess.run(["git", "init", "-b", "main"], cwd=self.path, capture_output=True)
             if proc.returncode != 0:
                 subprocess.run(["git", "init"], cwd=self.path, check=True, capture_output=True)
+        # A repository without commits has no base to branch from or diff against: snapshot it.
+        if subprocess.run(["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=self.path, capture_output=True).returncode != 0:
             subprocess.run(["git", "add", "-A", "--", ".", ":!harness"], cwd=self.path, capture_output=True)
             self._commit("lcc: workspace snapshot")
         return self.head()
