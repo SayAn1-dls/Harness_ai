@@ -8,6 +8,7 @@ from lcc.agents import (
     CONTRACTS,
     intake_gate,
     needs_security,
+    quick_plan,
     run_coder,
     run_context_agent,
     run_impact,
@@ -50,11 +51,13 @@ TERMINAL = {TaskStatus.STOPPED, TaskStatus.ESCALATED, TaskStatus.HUMAN_REVIEW, T
 class Orchestrator:
     """Owns the state machine, budgets, and agent activation. Agents never spawn agents."""
 
-    def __init__(self, store: HarnessStore, provider: BaseProvider | None = None, *, coder_max_steps: int = 30) -> None:
+    def __init__(self, store: HarnessStore, provider: BaseProvider | None = None, *, coder_max_steps: int = 30,
+                 test_timeout: int = 900) -> None:
         self.store = store
         self.raw_provider = provider or get_provider()
         self.llm: BaseProvider = self.raw_provider
         self.coder_max_steps = coder_max_steps
+        self.test_timeout = test_timeout
         self.index = None
         self.snapshot = None
         self.rules = []
@@ -222,7 +225,10 @@ class Orchestrator:
         task.current_agent = "planner"
         if not task.affected_files and self.snapshot:
             task.affected_files = self.snapshot.files[:8]
-        self.plan = run_planner(task, self.llm, self._summary(8, 1500), self.store)
+        if task.lane == Lane.A:  # lane A (intake -> coder -> verifier): the coder plans for itself
+            self.plan = quick_plan(task, self.store)
+        else:
+            self.plan = run_planner(task, self.llm, self._summary(8, 1500), self.store)
         task.plan_version = self.plan.version
         transition(task, TaskStatus.PLAN_VALIDATION)
         transition(task, TaskStatus.READY_TO_EXECUTE)
@@ -240,7 +246,8 @@ class Orchestrator:
             allowed=self.plan.allowed_files if self.plan else [],
             forbidden=self.plan.forbidden_files if self.plan else [],
         )
-        result = run_coder(task, self.llm, tools, self.plan, self.store, self.snapshot, self.applicable, self.coder_max_steps)
+        result = run_coder(task, self.llm, tools, self.plan, self.store, self.snapshot, self.applicable,
+                           self.coder_max_steps, repo_map=self._coder_map())
         self.last_changed = result.data["changed"]
         self.scope_expansions = sorted(set(self.scope_expansions) | set(result.data["scope_expansions"]))
         task.affected_files = list(dict.fromkeys(task.affected_files + self.last_changed))
@@ -256,10 +263,13 @@ class Orchestrator:
         task.current_agent = "verifier"
         tools = self._tools(task, CONTRACTS["verifier"].permissions)
         test_res = tools.run_test()
+        if test_res.get("timed_out"):
+            test_res = self._targeted_run(task, tools, test_res)
         lint_res = tools.run_lint()
         lint_ok = bool(lint_res.get("ok") or lint_res.get("skipped"))
-        ok = bool(test_res.get("ok")) and lint_ok
-        proof = self._prove_fix(task, tools) if ok else None
+        suite_ok, regress_note = self._suite_ok(task, test_res)
+        ok = suite_ok and lint_ok
+        proof = self._prove_fix(task, tools, test_res) if ok else None
         if proof and not proof["ok"]:
             ok = False
         evidence = [
@@ -267,6 +277,8 @@ class Orchestrator:
             f"lint: ok={lint_res.get('ok')} skipped={bool(lint_res.get('skipped'))}",
         ]
         output = f"{test_res.get('stdout') or ''}\n{test_res.get('stderr') or ''}".strip()
+        if regress_note:
+            output += f"\n{regress_note}"
         if not test_res.get("tests_run"):
             output += "\n[harness] tests_run=0: no tests were collected, which is not a pass."
         if not lint_ok:
@@ -293,31 +305,82 @@ class Orchestrator:
         return ok
 
     def _baseline(self, task: TaskState) -> None:
-        """Run the suite once on the untouched branch so later passes can be compared against it."""
+        """Run the suite once on the untouched branch so later runs are compared with it: tests that were
+        already failing (flaky, environment-bound, unrelated) must not block verification."""
         if task.baseline:
             return
         res = self._tools(task, CONTRACTS["verifier"].permissions).run_test()
-        task.baseline = {"ok": bool(res["ok"]), "tests_run": res["tests_run"], "tests_failed": res["tests_failed"]}
-        self.store.emit(task, "BASELINE", agent="verifier", result="pass" if res["ok"] else "fail", **task.baseline)
+        task.baseline = {"ok": bool(res["ok"]), "tests_run": res["tests_run"], "tests_failed": res["tests_failed"],
+                         "failed_ids": res.get("failed_ids") or [], "timed_out": bool(res.get("timed_out"))}
+        self.store.emit(task, "BASELINE", agent="verifier", result="pass" if res["ok"] else "fail",
+                        **{k: v for k, v in task.baseline.items() if k != "failed_ids"},
+                        failed_ids=task.baseline["failed_ids"][:20])
 
-    def _prove_fix(self, task: TaskState, tools: ToolRegistry) -> dict:
+    def _suite_ok(self, task: TaskState, res: dict) -> tuple[bool, str]:
+        """Pass-to-pass: the suite is green, or every test failing now was already failing at baseline."""
+        if res.get("ok"):
+            return True, ""
+        if not res.get("tests_run"):
+            return False, ""
+        now = set(res.get("failed_ids") or [])
+        before = set(task.baseline.get("failed_ids") or [])
+        if not now or not before:
+            return False, ""  # cannot attribute failures to tests: stay strict
+        new = sorted(now - before)
+        if new:
+            return False, f"[harness] tests failing now that passed before your change (regressions): {new[:15]}"
+        return True, (f"[harness] {len(now)} test(s) still fail exactly as at baseline (pre-existing, not caused by "
+                      f"this change): {sorted(now)[:10]}")
+
+    def _targeted_run(self, task: TaskState, tools: ToolRegistry, full: dict) -> dict:
+        """The full suite timed out: run the tests related to the change instead (changed tests, tests of
+        changed modules) so a slow suite does not make verification impossible."""
+        root = Path(task.workspace)
+        changed = changed_files(root)
+        stems = {Path(f).stem for f in changed if not _is_test(f)}
+        targets = [f for f in changed if _is_test(f)]
+        if self.index:
+            targets += [t for t in self.index.tests if any(s and s in Path(t).stem for s in stems)]
+        targets = list(dict.fromkeys(targets))[:8]
+        if not targets:
+            return full
+        runs = [tools.run_test(target=t) for t in targets]
+        merged = {
+            "ok": all(r["ok"] for r in runs), "returncode": max(r["returncode"] for r in runs),
+            "tests_run": sum(r["tests_run"] for r in runs), "tests_failed": sum(r["tests_failed"] for r in runs),
+            "failed_ids": sorted({i for r in runs for i in r.get("failed_ids") or []}),
+            "stdout": "\n".join(r["stdout"][-2000:] for r in runs), "timed_out": False,
+            "stderr": f"[harness] full suite timed out; ran targeted tests {targets}", "cmd": "targeted",
+        }
+        self.store.emit(task, "DECISION", decision="full suite timed out; verified with targeted tests", targets=targets)
+        return merged
+
+    def _prove_fix(self, task: TaskState, tools: ToolRegistry, now: dict | None = None) -> dict:
         """Evidence that the change fixes something: previously failing tests now pass (fail-to-pass), or
         new/updated tests fail on the base code and pass with the change. Passing an unchanged suite is not proof."""
         root = Path(task.workspace)
         changed = changed_files(root)
         if not changed:
             return {"ok": False, "level": 0, "message": "[harness] No files were changed; there is nothing to verify."}
-        if task.baseline.get("tests_failed"):
+        before = set(task.baseline.get("failed_ids") or [])
+        still = set((now or {}).get("failed_ids") or [])
+        if before and before - still:
+            fixed = sorted(before - still)
+            return {"ok": True, "level": 5, "message": f"[harness] fail-to-pass: {fixed[:10]} failed before the change and pass now."}
+        if task.baseline.get("tests_failed") and not before and (now or {}).get("ok"):
             return {"ok": True, "level": 5,
                     "message": f"[harness] fail-to-pass: {task.baseline['tests_failed']} test(s) failed before the change; the suite now passes."}
-        tests = [f for f in changed if _is_test(f) and f.endswith(".py")]
+        tests = [f for f in changed if _is_test(f)]
         if not tests:
             return {"ok": False, "level": 1, "message": (
-                "[harness] The existing tests already passed before your change, so passing them proves nothing about "
+                "[harness] The tests that pass now also passed before your change, so they prove nothing about "
                 "this issue. Add or update a test that fails without your fix and passes with it.")}
         sources = [f for f in changed if f not in tests]
         with base_sources(root, sources):
-            base_results = {t: tools.run_test(target=t) for t in tests}
+            if all(t.endswith(".py") for t in tests):
+                base_results = {t: tools.run_test(target=t) for t in tests}
+            else:  # other languages: the runner's file targeting varies, so run the suite on the base sources
+                base_results = {"suite": tools.run_test()}
         failing_on_base = [t for t, r in base_results.items() if not r["ok"]]
         if failing_on_base:
             return {"ok": True, "level": 5,
@@ -401,7 +464,10 @@ class Orchestrator:
         task.current_agent = "planner"
         note = f"class={rec['class']} action={rec['action']}\nfailed assumption: {rec['failed_assumption']}\nguidance: {rec['guidance']}"
         task.history.append(record)
-        self.plan = run_planner(task, self.llm, self._summary(6, 1200), self.store, recovery_note=note)
+        if task.lane == Lane.A:
+            self.plan = quick_plan(task, self.store, recovery_note=note)
+        else:
+            self.plan = run_planner(task, self.llm, self._summary(6, 1200), self.store, recovery_note=note)
         task.plan_version = self.plan.version
         record.new_plan = [s.action for s in self.plan.steps]
         self.store.write_json(f"iteration_{task.iteration}.json", record)
@@ -410,7 +476,13 @@ class Orchestrator:
     # ------------------------------------------------------------ helpers
     def _tools(self, task: TaskState, permissions: dict[str, bool], allowed=None, forbidden=None) -> ToolRegistry:
         policy = ToolPolicy(permissions, allowed_paths=allowed, forbidden_paths=forbidden)
-        return ToolRegistry(Path(task.workspace), policy, task.budget, index=self.index)
+        return ToolRegistry(Path(task.workspace), policy, task.budget, index=self.index, test_timeout=self.test_timeout)
+
+    def _coder_map(self) -> str:
+        """A compact repo map in the coder prefix saves an orientation step on repos larger than the snapshot."""
+        if not self.index or not self.snapshot or len(self.index.files) <= len(self.snapshot.files) + 4:
+            return ""
+        return repo_map(self.index, token_budget=500)
 
     def _query(self, task: TaskState) -> str:
         return f"{task.objective}\n{task.issue_body}\n" + "\n".join(c.text for c in task.acceptance_criteria)

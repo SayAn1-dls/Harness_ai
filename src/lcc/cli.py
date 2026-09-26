@@ -20,7 +20,8 @@ console = Console()
 
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
-    """Minimal .env loader (KEY=VALUE lines). Existing environment variables win."""
+    """Minimal .env loader (KEY=VALUE lines). Non-empty environment variables win; `make` passes an unset
+    AI_API_KEY through as an empty string, which must not hide the value in .env."""
     if not path.is_file():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -28,7 +29,9 @@ def _load_dotenv(path: Path = Path(".env")) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip().removeprefix("export "), value.strip().strip('"').strip("'"))
+        key = key.strip().removeprefix("export ").strip()
+        if not os.environ.get(key):
+            os.environ[key] = value.strip().strip('"').strip("'")
 
 
 @app.callback()
@@ -159,7 +162,18 @@ def bench(
 
     from lcc.config import load_config
 
+    from lcc.model import ProviderError
+
     name = provider or load_config().model.provider
+    shared = None
+    if name not in {"scripted", "mock"}:
+        try:  # resolve and check the model once: a bad key must not burn through every task
+            shared = get_provider(name)
+            shared.preflight()
+        except ProviderError as exc:
+            console.print(f"[red]Cannot start the benchmark:[/] {exc}")
+            raise typer.Exit(2) from None
+        console.print(f"model: {shared.name} / {shared.model}")
 
     def show(r: dict) -> None:
         mark = "[green]PASS[/]" if r["resolved"] else "[red]FAIL[/]"
@@ -168,10 +182,14 @@ def bench(
             f"tokens={r['tokens']} tools={r['tool_calls']} {r['runtime_s']}s" + (f"\n  error: {r['error'].splitlines()[0]}" if r["error"] else "")
         )
 
-    _, summary, out = run_bench(tasks_dir, name, task or None, max_iterations, results_dir, on_result=show)
+    _, summary, out = run_bench(tasks_dir, name, task or None, max_iterations, results_dir, on_result=show,
+                                provider=shared)
     console.print_json(json.dumps(summary))
     if out:
         console.print(f"results: {out}")
+    if summary.get("aborted"):
+        console.print(f"[red]aborted:[/] {summary['aborted']}")
+        raise typer.Exit(2)
     if summary["resolved"] < min_resolved:
         console.print(f"[red]resolved {summary['resolved']} < required {min_resolved}[/]")
         raise typer.Exit(1)
@@ -183,16 +201,17 @@ def start(
     repo: str = typer.Option(None, "--repo", "-r", help="Target repository: local path, git URL, or owner/name"),
     provider: str = typer.Option(None, "--provider", "-p", help="Override [model].provider from lcc.config.toml"),
     once: bool = typer.Option(False, "--once", help="Exit after one issue"),
+    base: str = typer.Option(None, "--base", "-b", help="Base commit/ref to check out before fixing"),
 ) -> None:
     """Evaluation mode (what `make run` launches): read an issue, fix it in the repo, report the verified patch."""
     from lcc.session import start as run_session
 
-    raise typer.Exit(run_session(issue or None, repo or None, provider, once))
+    raise typer.Exit(run_session(issue or None, repo or None, provider, once, base or None))
 
 
 @app.command()
 def doctor() -> None:
-    """Check the runtime: python, git, config, AI_API_KEY presence, provider resolution (no model call)."""
+    """Check the runtime: python, git, config, AI_API_KEY presence, provider resolution, and one tiny model call."""
     import shutil
     import sys
 
@@ -208,9 +227,14 @@ def doctor() -> None:
     ]
     try:
         p = get_provider()
-        rows.append(("model", f"{p.name} / {p.model} (temperature={cfg.model.temperature})", True))
+        rows.append(("provider", f"{p.name} ({getattr(p, 'base_url', '')})", True))
+        try:
+            model = p.preflight()
+            rows.append(("model", f"{model} answered (temperature={cfg.model.temperature})", True))
+        except ProviderError as exc:
+            rows.append(("model", str(exc)[:400], False))
     except ProviderError as exc:
-        rows.append(("model", str(exc), False))
+        rows.append(("provider", str(exc), False))
     ok = True
     for name, value, good in rows:
         ok &= good

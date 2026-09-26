@@ -34,6 +34,10 @@ class RunConfig:
     workspaces_dir: str = "workspaces"
     outputs_dir: str = "outputs"
     prepare_env: bool = True
+    # Seconds for one full test-suite run; a timed-out full run falls back to the targeted tests.
+    test_timeout: int = 900
+    # Send one tiny completion before starting work (fails fast on a bad key, no balance, unknown model).
+    preflight: bool = True
 
 
 @dataclass
@@ -71,9 +75,6 @@ def load_config(path: Path | None = None) -> Config:
     return Config(model=model, run=_pick(RunConfig, raw.get("run") or {}), path=path if path.is_file() else None)
 
 
-def api_key(provider_key_env: str = "") -> str:
-    """AI_API_KEY is the evaluation credential. Legacy per-provider variables are a local-dev fallback."""
-    for name in (KEY_ENV, "LCC_API_KEY", provider_key_env):
-        if name and os.environ.get(name):
-            return os.environ[name].strip()
-    return ""
+def api_key() -> str:
+    """AI_API_KEY is the only credential the harness reads."""
+    return (os.environ.get(KEY_ENV) or "").strip()

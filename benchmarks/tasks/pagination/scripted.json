@@ -1,0 +1,56 @@
+{
+  "coder": [
+    [
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "paging.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "paging.py",
+          "old_str": "    start = page * per_page",
+          "new_str": "    if page < 1:\n        raise ValueError(\"page must be >= 1\")\n    start = (page - 1) * per_page"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "tests/test_paging.py",
+          "old_str": "from paging import page_count",
+          "new_str": "from paging import page_count, paginate"
+        }
+      },
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "tests/test_paging.py",
+          "old_str": "        self.assertEqual(page_count(0, 3), 0)\n",
+          "new_str": "        self.assertEqual(page_count(0, 3), 0)\n\n    def test_paginate_is_one_based(self):\n        items = list(range(10))\n        self.assertEqual(paginate(items, 1, 3), [0, 1, 2])\n        self.assertEqual(paginate(items, 4, 3), [9])\n        self.assertEqual(paginate(items, 5, 3), [])\n        with self.assertRaises(ValueError):\n            paginate(items, 0, 3)\n"
+        }
+      }
+    ],
+    [
+      {
+        "name": "run_test",
+        "arguments": {
+          "target": "tests/test_paging.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "finish",
+        "arguments": {
+          "summary": "paginate treated page as 0-based; it now offsets by page-1 and rejects page < 1."
+        }
+      }
+    ]
+  ]
+}

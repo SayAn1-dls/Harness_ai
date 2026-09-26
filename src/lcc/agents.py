@@ -27,7 +27,13 @@ from lcc.schemas import (
     TaskState,
 )
 from lcc.store import HarnessStore
-from lcc.tools import ToolRegistry
+from lcc.tools import ToolRegistry, changed_files
+
+ISSUE_CHARS = 8000  # long GitHub threads are cut here; the head and the tail carry most of the signal
+
+
+def issue_text(task: TaskState, limit: int = ISSUE_CHARS) -> str:
+    return truncate(task.issue_body or task.objective, limit)
 
 CONTRACTS: dict[str, AgentContract] = {
     "intake": AgentContract(
@@ -72,10 +78,10 @@ CONTRACTS: dict[str, AgentContract] = {
         name="coder",
         purpose="Implement the plan with a minimal patch.",
         tools=[
-            "get_repo_map", "search_code", "find_symbol", "find_references", "read_file",
-            "edit_file", "write_file", "git_diff", "run_test",
+            "search_code", "find_symbol", "find_references", "read_file", "repo_tree",
+            "edit_file", "write_file", "run_test", "shell", "git_history",
         ],
-        permissions={"read_repository": True, "write_repository": True, "run_tests": True, "shell": False},
+        permissions={"read_repository": True, "write_repository": True, "run_tests": True, "shell": True},
         max_tool_calls=40,
     ),
     "verifier": AgentContract(
@@ -106,13 +112,9 @@ CONTRACTS: dict[str, AgentContract] = {
     ),
 }
 
-HARNESS_RULES = """Harness rules (non-negotiable):
-- You work on an isolated task branch. Never touch harness/ or .git/.
-- Make the smallest change that satisfies the acceptance criteria. No drive-by refactors or reformatting.
-- Read before you edit. Prefer find_symbol/search_code/read_file ranges over reading whole large files.
-- Use edit_file for existing files (old_str must match exactly and be unique); write_file only for new files.
-- Add or update a test that proves the fix when the behavior is testable.
-- Your claim of success is not verification: an independent verifier will run the full test suite."""
+HARNESS_RULES = """Rules: work only on this task branch; never touch harness/ or .git/ (the harness owns git). Make the
+smallest change that meets the acceptance criteria: no refactors, renames or reformatting. An independent verifier
+runs the tests and checks that your new test fails without your fix."""
 
 
 class AgentSpawnError(RuntimeError):
@@ -139,7 +141,7 @@ INTAKE_SCHEMA = (
 
 
 def run_intake(task: TaskState, provider: BaseProvider, store: HarnessStore, critique: str = "") -> IntakeResult:
-    prompt = f"Issue title: {task.objective}\n\nIssue body:\n{task.issue_body or task.objective}\n"
+    prompt = f"Issue title: {task.objective}\n\nIssue body:\n{issue_text(task)}\n"
     if critique:
         prompt += f"\nYour previous analysis was incomplete: {critique}\nFix those gaps."
     data = provider.structured_output(
@@ -209,7 +211,7 @@ def run_context_agent(task: TaskState, provider: BaseProvider, tools: ToolRegist
             "read-only and find the files an engineer would need to implement the task (the code to change, its "
             "callers, and the relevant tests). Be economical. Then call finish with `files` = those paths."
         ),
-        prompt=f"Task: {task.objective}\n\nIssue:\n{task.issue_body}\n\nAlready selected: {snapshot.files}\n"
+        prompt=f"Task: {task.objective}\n\nIssue:\n{issue_text(task, 4000)}\n\nAlready selected: {snapshot.files}\n"
         f"Score breakdown: {snapshot.scores}",
         tools=tools,
         allowed=CONTRACTS["context"].tools,
@@ -252,7 +254,7 @@ def run_planner(
     recovery_note: str = "",
 ) -> ImplementationPlan:
     prompt = (
-        f"Objective: {task.objective}\nIssue:\n{task.issue_body}\n"
+        f"Objective: {task.objective}\nIssue:\n{issue_text(task, 5000)}\n"
         f"Acceptance criteria: {[c.text for c in task.acceptance_criteria]}\n"
         f"Candidate files: {task.affected_files}\n\nContext:\n{context_summary[:12000]}"
     )
@@ -296,18 +298,55 @@ def run_planner(
     return plan
 
 
+def quick_plan(task: TaskState, store: HarnessStore, recovery_note: str = "") -> ImplementationPlan:
+    """Deterministic plan for lane A: no model call; the coder's own workflow covers the planning."""
+    steps = []
+    if recovery_note:
+        steps.append(PlanStep(order=1, action=f"Address the last failure first. {recovery_note}", files=[]))
+    steps += [
+        PlanStep(order=len(steps) + 1, action="Locate the root cause and fix it minimally", files=task.affected_files[:6]),
+        PlanStep(order=len(steps) + 2, action="Add a regression test that fails before the fix", verification="tests"),
+    ]
+    plan = ImplementationPlan(version=task.plan_version + 1, steps=steps, allowed_files=[], forbidden_files=[])
+    store.write_json(f"plan_v{plan.version}.json", plan)
+    store.write_json("plan.json", plan)
+    return plan
+
+
 # ---------------------------------------------------------------- coder
-CODER_SYSTEM = "You are the Implementation Agent of an autonomous software-engineering harness."
+CODER_SYSTEM = """You are the Implementation Agent of an autonomous coding harness. Fix the issue like a careful senior
+engineer: find the root cause, make a minimal correct change, prove it with a test.
+1. Locate: use the context excerpts below first; then find_symbol / search_code / read_file line ranges.
+2. Reproduce when cheap: run_test on one file, or `shell` with python -c.
+3. Fix the root cause, including the edge cases the issue implies. Keep public signatures; check callers.
+4. Add a regression test beside the existing tests, in their style, that fails before the fix; run_test it.
+5. Call finish (root cause + fix, two sentences) as soon as tests pass.
+Every step re-sends this conversation: batch independent lookups as several tool calls in one turn, read line
+ranges not whole files, and do not re-read a file you just edited (edit_file returns the new lines)."""
 
 
-def coder_system_prompt(rules: list[Rule], snapshot: ContextSnapshot | None) -> str:
-    """Static prefix: identical across iterations while the snapshot is unchanged (prompt-cache friendly)."""
-    parts = [CODER_SYSTEM, HARNESS_RULES, f"Agent contract: {CONTRACTS['coder'].purpose}"]
+SNAPSHOT_CHARS = 14_000  # total excerpt budget in the coder prefix (~3.5k tokens), re-sent on every step
+PACKET_CHARS = 4_000
+
+
+def coder_system_prompt(rules: list[Rule], snapshot: ContextSnapshot | None, repo_map: str = "") -> str:
+    """Static prefix: identical across steps and iterations while the snapshot is unchanged, so providers'
+    prefix caches (DeepSeek, DashScope) hit on every call."""
+    parts = [CODER_SYSTEM, HARNESS_RULES]
     if rules:
-        parts.append("Repository rules:\n" + "\n".join(f"- [{r.id} {r.scope}] {r.instruction[:600]}" for r in rules[:12]))
+        parts.append("Repository rules:\n" + "\n".join(f"- [{r.id} {r.scope}] {r.instruction[:400]}" for r in rules[:10]))
+    if repo_map:
+        parts.append(truncate(repo_map, 2500))
     if snapshot and snapshot.packets:
-        body = "\n\n".join(f"### {p.path}\n```\n{p.excerpt[:3000]}\n```" for p in snapshot.packets[:8])
-        parts.append(f"Context snapshot {snapshot.snapshot_id} (excerpts; read_file for full, numbered content):\n{body}")
+        used, blocks = 0, []
+        for p in snapshot.packets[:8]:
+            room = min(PACKET_CHARS, SNAPSHOT_CHARS - used)
+            if room < 400:
+                break
+            excerpt = p.excerpt if len(p.excerpt) <= room else p.excerpt[:room] + "\n[... excerpt cut; read_file for the rest]"
+            blocks.append(f"### {p.path}\n```\n{excerpt}\n```")
+            used += len(excerpt)
+        parts.append(f"Context snapshot {snapshot.snapshot_id} (ranked excerpts; read_file gives numbered lines):\n" + "\n\n".join(blocks))
     return "\n\n".join(parts)
 
 
@@ -315,7 +354,7 @@ def coder_task_prompt(task: TaskState, plan: ImplementationPlan, diff: str) -> s
     """Dynamic suffix: plan, previous attempts, last failure, current diff."""
     lines = [
         f"Task {task.task_id}: {task.objective}",
-        f"Issue:\n{task.issue_body}",
+        f"Issue:\n{issue_text(task)}",
         "Acceptance criteria:\n" + "\n".join(f"- {c.id}: {c.text}" for c in task.acceptance_criteria),
         f"Plan v{plan.version}:\n" + "\n".join(f"{s.order}. {s.action} {s.files or ''}" for s in plan.steps),
         f"Allowed files: {plan.allowed_files or 'any (keep it minimal)'}",
@@ -323,6 +362,10 @@ def coder_task_prompt(task: TaskState, plan: ImplementationPlan, diff: str) -> s
     if task.baseline:
         b = task.baseline
         line = f"Baseline before any change: tests_run={b.get('tests_run')} failed={b.get('tests_failed')}."
+        if b.get("failed_ids"):
+            line += f" Failing at baseline: {b['failed_ids'][:10]} (if unrelated to the issue, leave them alone)."
+        if b.get("timed_out"):
+            line += " The full suite is slow: run focused test files with run_test(target=...)."
         if not b.get("tests_failed"):
             line += (" The existing suite does not catch this issue, so you MUST add or update a test that fails"
                      " without your fix and passes with it; the verifier checks this.")
@@ -333,7 +376,7 @@ def coder_task_prompt(task: TaskState, plan: ImplementationPlan, diff: str) -> s
         lines.append(f"Latest verification failure output:\n```\n{task.last_failure[-3000:]}\n```")
     if diff.strip():
         lines.append(f"Current uncommitted diff (your earlier work is still applied):\n```diff\n{truncate(diff, 5000)}\n```")
-    lines.append("Implement the change now. Run focused tests with run_test if useful, then call finish.")
+    lines.append("Work through the steps: locate, reproduce, fix the root cause, add a regression test, run it, then call finish.")
     return "\n\n".join(lines)
 
 
@@ -346,18 +389,24 @@ def run_coder(
     snapshot: ContextSnapshot | None,
     rules: list[Rule],
     max_steps: int = 30,
+    repo_map: str = "",
 ) -> AgentResult:
     diff = tools.git_diff().get("diff", "")
+    if diff.startswith("(no changes"):
+        diff = ""
     loop = run_tool_loop(
         provider,
         agent="coder",
-        system=coder_system_prompt(rules, snapshot),
+        system=coder_system_prompt(rules, snapshot, repo_map),
         prompt=coder_task_prompt(task, plan, diff),
         tools=tools,
         allowed=CONTRACTS["coder"].tools,
         budget=task.budget,
         max_steps=max_steps,
     )
+    for rel in changed_files(tools.workspace):  # edits made through `shell` count too
+        if rel not in tools.changed:
+            tools.changed.append(rel)
     data = {
         "changed": list(tools.changed),
         "scope_expansions": list(tools.scope_expansions),
@@ -392,7 +441,7 @@ def run_reviewer(
     scope_expansions: list[str] | None = None,
 ) -> list[Finding]:
     data = provider.structured_output(
-        f"Task: {task.objective}\nIssue:\n{task.issue_body}\n"
+        f"Task: {task.objective}\nIssue:\n{issue_text(task, 4000)}\n"
         f"Acceptance: {[c.model_dump(include={'id', 'text'}) for c in task.acceptance_criteria]}\n"
         f"Files edited outside the plan: {scope_expansions or []}\n"
         f"Test evidence:\n{test_evidence[-2000:]}\n\nDiff:\n{truncate(diff, 12000)}",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -27,6 +28,9 @@ from lcc.workspace import Workspace
 GH_ISSUE = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+)/issues/(\d+)")
 GH_REPO = re.compile(r"^(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 REPO_LINE = re.compile(r"^\s*(?:repo|repository)\s*:\s*(\S+)\s*$", re.I | re.M)
+BASE_LINE = re.compile(r"^\s*(?:base[ _-]?commit|base[ _-]?sha|base|commit)\s*:\s*([0-9a-fA-F]{7,40})\s*$", re.I | re.M)
+REF_SUFFIX = re.compile(r"^(?P<repo>.+?)@(?P<ref>[\w.-]+)$")
+COPY_IGNORE = shutil.ignore_patterns(".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", "harness", ".mypy_cache")
 SUCCESS = {TaskStatus.HUMAN_REVIEW, TaskStatus.VERIFIED, TaskStatus.PR_READY}
 END_MARKERS = {"END", "EOF", "."}
 PY_MARKERS = ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt")
@@ -39,6 +43,7 @@ class Issue:
     title: str
     body: str
     repo_hint: str = ""
+    base: str = ""
     number: int | None = None
     url: str = ""
     labels: list[str] = field(default_factory=list)
@@ -87,16 +92,38 @@ def parse_issue(raw: str) -> Issue:
     lines = raw.splitlines()
     title = lines[0].lstrip("# ").strip()[:200]
     hint = REPO_LINE.search(raw)
+    base = BASE_LINE.search(raw)
     num = GH_ISSUE.search(raw)
-    return Issue(title=title, body=raw, repo_hint=hint.group(1) if hint else "", number=int(num.group(3)) if num else None)
+    return Issue(title=title, body=raw, repo_hint=hint.group(1) if hint else "", base=base.group(1) if base else "",
+                 number=int(num.group(3)) if num else None)
 
 
 # ------------------------------------------------------------------ repository
+def split_ref(spec: str) -> tuple[str, str]:
+    """`repo@<sha|tag|branch>` -> (repo, ref). `git@host:...` SSH URLs are left alone."""
+    m = REF_SUFFIX.match(spec)
+    if not m or spec.startswith("git@") and m.group("repo") == "git":
+        return spec, ""
+    if Path(spec).expanduser().is_dir():  # a real directory whose name contains '@'
+        return spec, ""
+    return m.group("repo"), m.group("ref")
+
+
 def resolve_repo(spec: str, workspaces: Path, console: Console) -> Path:
-    """A local directory is used in place (work happens on an agent/* branch). URLs and owner/name are cloned."""
+    """A local git repository root is used in place (work happens on an agent/* branch, the user's branch and
+    uncommitted changes are restored afterwards). A plain folder, or a folder inside another repository, is
+    copied into workspaces/ first so the harness never creates nested repositories or stray state there.
+    URLs and owner/name are cloned."""
     local = Path(spec).expanduser()
     if local.is_dir():
-        return local.resolve()
+        local = local.resolve()
+        if (local / ".git").exists():
+            return local
+        dest = workspaces / f"{local.name}-{time.strftime('%Y%m%d-%H%M%S')}"
+        workspaces.mkdir(parents=True, exist_ok=True)
+        console.print(f"[cyan]copying[/] {local} -> {dest} (not a git repository root; the original is left untouched)")
+        shutil.copytree(local, dest, ignore=COPY_IGNORE, symlinks=True)
+        return dest
     if spec.startswith(("http://", "https://", "git@", "ssh://")) or GH_REPO.match(spec):
         m = GH_REPO.match(spec)
         url = spec if not m or spec.startswith(("http", "git@", "ssh")) else f"https://github.com/{m.group(1)}/{m.group(2)}"
@@ -111,8 +138,37 @@ def resolve_repo(spec: str, workspaces: Path, console: Console) -> Path:
     raise FileNotFoundError(f"repository not found: {spec}")
 
 
+def checkout_base(repo: Path, ref: str, console: Console) -> None:
+    """Pin the base commit the issue is graded against (REPO=url@sha, BASE=sha, or a `Base commit:` line)."""
+    if not ref:
+        return
+    if _git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0:
+        _git(repo, "fetch", "--quiet", "origin", ref)
+    proc = _git(repo, "checkout", "-q", "--detach", ref)
+    if proc.returncode != 0:
+        raise RuntimeError(f"cannot check out base commit {ref}: {proc.stderr.strip()[-300:]}")
+    console.print(f"[cyan]base commit[/] {_git(repo, 'rev-parse', '--short', 'HEAD').stdout.strip()} ({ref})")
+
+
+def prepare_node(repo: Path, console: Console) -> None:
+    """Install a JavaScript target's dependencies so `npm test` can run."""
+    if not (repo / "package.json").exists() or (repo / "node_modules").exists() or not shutil.which("npm"):
+        return
+    console.print("[cyan]installing npm dependencies[/]")
+    cmd = ["npm", "ci"] if (repo / "package-lock.json").exists() else ["npm", "install"]
+    proc = subprocess.run(cmd + ["--no-audit", "--no-fund", "--loglevel=error"], cwd=repo, text=True,
+                          capture_output=True, timeout=1800)
+    if proc.returncode != 0 and cmd[1] == "ci":
+        subprocess.run(["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"], cwd=repo,
+                       capture_output=True, timeout=1800)
+
+
 def prepare_env(repo: Path, venv: Path, console: Console) -> str | None:
     """Best-effort isolated venv with the target's dependencies so its tests can import it. Returns the python path."""
+    try:
+        prepare_node(repo, console)
+    except Exception as exc:  # noqa: BLE001 - best effort; the tests will show what is missing
+        console.print(f"[yellow]npm install failed: {exc}[/]")
     if not any((repo / m).exists() for m in PY_MARKERS):
         return None
     py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -168,6 +224,12 @@ def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console
 
     store = HarnessStore(repo)
     origin, stashed = _prepare_repo(repo, console)
+    if issue.base:
+        try:
+            checkout_base(repo, issue.base, console)
+        except Exception:
+            _restore_repo(repo, TaskState(task_id="x", repository="", workspace=str(repo), objective=""), origin, stashed, console)
+            raise
     task_id = _fresh_task_id(repo, task_id)
     body = issue.body if not issue.url else f"{issue.url}\n\n{issue.body}"
     task = create_task(
@@ -179,7 +241,8 @@ def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console
     t0 = time.monotonic()
     try:
         try:
-            task = Orchestrator(store, provider, coder_max_steps=cfg.run.coder_max_steps).run(task)
+            task = Orchestrator(store, provider, coder_max_steps=cfg.run.coder_max_steps,
+                                test_timeout=cfg.run.test_timeout).run(task)
         except ProviderError as exc:
             console.print(f"[red]model error:[/] {exc}")
             task = store.load_task() or task
@@ -227,9 +290,9 @@ def _fresh_task_id(repo: Path, task_id: str) -> str:
 
 def _restore_repo(repo: Path, task: TaskState, origin: str, stashed: bool, console: Console) -> None:
     """Park any unverified work as a commit on the task branch, return to the original branch, restore stashed changes."""
-    if origin and origin != "HEAD" and task.branch.startswith("agent/") \
-            and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == task.branch:
-        if _git(repo, "status", "--porcelain", "--", ".", ":!harness").stdout.strip():
+    if origin and origin != "HEAD" and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != origin:
+        if task.branch.startswith("agent/") and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == task.branch \
+                and _git(repo, "status", "--porcelain", "--", ".", ":!harness").stdout.strip():
             _git(repo, "add", "-A", "--", ".", ":!harness")
             _git(repo, "-c", "user.name=lcc", "-c", "user.email=lcc@local", "commit", "-q", "-m", f"lcc: unverified attempt for {task.task_id}")
         _git(repo, "checkout", "-q", origin)
@@ -321,18 +384,22 @@ def _banner(console: Console, cfg: Config, provider: BaseProvider | None, err: s
     ))
 
 
-def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None, once: bool) -> int:
+def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None, once: bool,
+          base_arg: str | None = None) -> int:
     console = Console()
     cfg = load_config()
     provider: BaseProvider | None = None
     err = ""
     try:
         provider = get_provider(provider_name)
+        if cfg.run.preflight:
+            provider.preflight()
     except ProviderError as exc:
         err = str(exc)
+        provider = None
     _banner(console, cfg, provider, err)
     if provider is None:
-        console.print("[red]Cannot start: " + err + "[/]\nExport AI_API_KEY and re-run `make run`.")
+        console.print("[red]Cannot start: " + err + "[/]\nCheck AI_API_KEY (and LCC_PROVIDER / LCC_MODEL if set), then re-run `make run`.")
         return 2
 
     interactive = sys.stdin.isatty() and not issue_arg
@@ -356,6 +423,8 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
             issue_arg = None
             continue
         spec = repo_arg or issue.repo_hint
+        spec, ref = split_ref(spec) if spec else (spec, "")
+        issue.base = base_arg or ref or issue.base
         if not spec and interactive:
             spec = input("repository (local path, git URL, or owner/name)> ").strip()
         if not spec:

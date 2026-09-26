@@ -6,12 +6,17 @@
 #   LCC_PROVIDER, LCC_MODEL, LCC_BASE_URL, LCC_MODEL_FAST, LCC_MODEL_STRONG
 
 [model]
-# auto      -> pick the provider from the AI_API_KEY format (see README, "Model configuration")
-# deepseek | gemini | openai | anthropic | openrouter | groq | grok | custom (needs base_url)
+# The final evaluation uses DeepSeek and Qwen models.
+# auto      -> pick the provider from AI_API_KEY: a plain `sk-` key is checked (GET /models, no tokens) against
+#              DeepSeek, then Qwen on Alibaba Cloud Model Studio (DashScope, international, then China).
+# deepseek | qwen | qwen-cn | gemini | openai | anthropic | openrouter | groq | grok | custom (needs base_url)
 provider = "auto"
-# Empty = the provider's default below. Set this to the model the organisers prescribe.
+# Empty = the provider's default below; if the account does not serve it, the preflight call falls back to the
+# next model of that provider (deepseek-chat -> deepseek-reasoner; qwen3-coder-plus -> qwen-plus -> qwen-max).
+# Set this (or LCC_MODEL) to pin one model, e.g. "deepseek-reasoner" or "qwen3-coder-plus".
 model = ""
-# Empty = the provider's official OpenAI-compatible endpoint.
+# Empty = the provider's official OpenAI-compatible endpoint. Any OpenAI-compatible server works here, e.g. a
+# self-hosted Qwen on vLLM/Ollama: "http://localhost:8000/v1" (provider becomes "custom").
 base_url = ""
 # Text-only chat-completions with function calling. No image/audio/video input is ever sent.
 temperature = 0.0
@@ -25,7 +30,9 @@ model_strong = ""
 # Default model per provider when [model].model is empty.
 [model.defaults]
 deepseek = "deepseek-chat"
-gemini = "gemini-2.5-flash"
+qwen = "qwen3-coder-plus"
+qwen-cn = "qwen3-coder-plus"
+gemini = "gemini-3.8-flash"
 openai = "gpt-4.1"
 anthropic = "claude-sonnet-5"
 openrouter = "deepseek/deepseek-chat"
@@ -42,3 +49,7 @@ workspaces_dir = "workspaces"
 outputs_dir = "outputs"
 # Create an isolated venv for the target repo and install its dependencies before running tests.
 prepare_env = true
+# Seconds for one full test-suite run; when it times out, verification uses the tests related to the change.
+test_timeout = 900
+# One tiny completion before any work: a bad key, empty balance or unknown model is reported in seconds.
+preflight = true

@@ -1,0 +1,62 @@
+{
+  "coder": [
+    [
+      {
+        "name": "find_symbol",
+        "arguments": {
+          "name": "format_price"
+        }
+      },
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "billing/invoice.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "billing/money.py",
+          "old_str": "CURRENCY_SYMBOLS = {\"USD\": \"$\", \"GBP\": \"£\"}",
+          "new_str": "CURRENCY_SYMBOLS = {\"USD\": \"$\", \"GBP\": \"£\", \"EUR\": \"€\"}"
+        }
+      },
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "billing/invoice.py",
+          "old_str": "from billing.money import format_price\n\nSUPPORTED = (\"USD\", \"GBP\")",
+          "new_str": "from billing.money import CURRENCY_SYMBOLS, format_price\n\nSUPPORTED = tuple(CURRENCY_SYMBOLS)"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "tests/test_billing.py",
+          "old_str": "    def test_unknown_currency(self):",
+          "new_str": "    def test_eur(self):\n        self.assertEqual(format_price(1234.5, \"EUR\"), \"€1,234.50\")\n        inv = Invoice(\"acme\", \"EUR\")\n        inv.add(\"x\", 3)\n        self.assertEqual(inv.total_line(), \"Total for acme: €3.00\")\n\n    def test_unknown_currency(self):"
+        }
+      }
+    ],
+    [
+      {
+        "name": "run_test",
+        "arguments": {
+          "target": "tests/test_billing.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "finish",
+        "arguments": {
+          "summary": "Invoice kept its own currency list; it now derives SUPPORTED from money.CURRENCY_SYMBOLS, which gains EUR."
+        }
+      }
+    ]
+  ]
+}

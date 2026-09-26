@@ -4,6 +4,7 @@
 #
 # make run                          interactive: paste a GitHub issue URL, an issue file path, or issue text
 # make run ISSUE=<url|file|text> REPO=<path|git-url|owner/name>   one issue, non-interactive
+#          BASE=<sha>  (or REPO=<url>@<sha>, or a "Base commit: <sha>" line in the issue) pins the base commit
 # make run < issue.md               issue piped on stdin
 # make test                         unit tests + offline end-to-end benchmark (no API key needed)
 # make eval                         live benchmark on the 7 fixture tasks (uses AI_API_KEY)
@@ -23,13 +24,14 @@ PYTHON ?= $(shell for p in python3.13 python3.12 python3.11 python3; do \
 
 ISSUE    ?=
 REPO     ?=
+BASE     ?=
 PROVIDER ?=
 TASK     ?=
 
 .PHONY: help setup run test eval doctor clean distclean
 
 help:
-	@sed -n '1,13p' Makefile | sed 's/^# \{0,1\}//'
+	@sed -n '1,12p' Makefile | sed 's/^# \{0,1\}//'
 
 setup:
 	@echo "Setting up LCC harness..."
@@ -50,6 +52,7 @@ run:
 	@AI_API_KEY="$$AI_API_KEY" $(RUN) start \
 		$(if $(ISSUE),--issue "$(ISSUE)" --once) \
 		$(if $(REPO),--repo "$(REPO)") \
+		$(if $(BASE),--base "$(BASE)") \
 		$(if $(PROVIDER),--provider "$(PROVIDER)")
 
 test:
@@ -57,7 +60,7 @@ test:
 	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
 	@$(PY) -m pytest -q
 	@echo "Offline end-to-end benchmark (scripted model: no API key, deterministic)..."
-	@$(RUN) bench -p scripted -t simple_bug -t failure_heavy -t ambiguous --min-resolved 3 --results-dir benchmarks/results
+	@$(RUN) bench -p scripted --min-resolved 7 --results-dir benchmarks/results
 
 eval:
 	@echo "Live benchmark (hidden checks grade every task)..."

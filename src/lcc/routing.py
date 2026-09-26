@@ -27,8 +27,8 @@ class RoutedProvider(BaseProvider):
             return self.strong
         return self.default
 
-    def chat(self, messages, *, tools=None, max_tokens=4096, agent="") -> ChatResult:
-        return self.pick(agent).chat(messages, tools=tools, max_tokens=max_tokens, agent=agent)
+    def chat(self, messages, *, tools=None, max_tokens=4096, agent="", **kw) -> ChatResult:
+        return self.pick(agent).chat(messages, tools=tools, max_tokens=max_tokens, agent=agent, **kw)
 
 
 def maybe_route(provider: BaseProvider, task: TaskState) -> BaseProvider:

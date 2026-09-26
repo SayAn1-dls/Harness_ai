@@ -1,0 +1,48 @@
+{
+  "coder": [
+    [
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "files.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "files.py",
+          "old_str": "def read_upload(name):\n    with open(os.path.join(UPLOAD_DIR, name), encoding=\"utf-8\") as fh:",
+          "new_str": "def read_upload(name):\n    base = UPLOAD_DIR.resolve()\n    target = (base / name).resolve()\n    if not target.is_relative_to(base):\n        raise ValueError(f\"invalid upload name: {name!r}\")\n    with open(target, encoding=\"utf-8\") as fh:"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "tests/test_files.py",
+          "old_str": "        self.assertEqual(read_upload(\"hello.txt\"), \"hello\\n\")\n",
+          "new_str": "        self.assertEqual(read_upload(\"hello.txt\"), \"hello\\n\")\n\n    def test_rejects_paths_outside_uploads(self):\n        for name in (\"../secrets.txt\", \"/etc/passwd\", \"2024/../../secrets.txt\"):\n            with self.assertRaises(ValueError):\n                read_upload(name)\n        self.assertTrue(read_upload(\"2024/report.txt\"))\n"
+        }
+      }
+    ],
+    [
+      {
+        "name": "run_test",
+        "arguments": {
+          "target": "tests/test_files.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "finish",
+        "arguments": {
+          "summary": "read_upload joined untrusted names onto UPLOAD_DIR; it now resolves the path and rejects anything outside it."
+        }
+      }
+    ]
+  ]
+}

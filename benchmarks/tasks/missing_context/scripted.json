@@ -1,0 +1,64 @@
+{
+  "coder": [
+    [
+      {
+        "name": "find_symbol",
+        "arguments": {
+          "name": "normalize_email"
+        }
+      },
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "app/validation.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "read_file",
+        "arguments": {
+          "path": "utils/text.py",
+          "start": 1,
+          "end": 4
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "utils/text.py",
+          "old_str": "    return raw.strip()",
+          "new_str": "    return raw.strip().lower()"
+        }
+      }
+    ],
+    [
+      {
+        "name": "edit_file",
+        "arguments": {
+          "path": "tests/test_users.py",
+          "old_str": "    def test_invalid(self):",
+          "new_str": "    def test_duplicate_ignores_email_case(self):\n        s = UserStore()\n        register_user(\"alice@example.com\", \"A\", store=s)\n        with self.assertRaises(DuplicateUser):\n            register_user(\"Alice@Example.COM\", \"A2\", store=s)\n        self.assertEqual(s.count(), 1)\n\n    def test_invalid(self):"
+        }
+      }
+    ],
+    [
+      {
+        "name": "run_test",
+        "arguments": {
+          "target": "tests/test_users.py"
+        }
+      }
+    ],
+    [
+      {
+        "name": "finish",
+        "arguments": {
+          "summary": "The account key came from utils.text.normalize_email, which only stripped whitespace; it now lower-cases too."
+        }
+      }
+    ]
+  ]
+}

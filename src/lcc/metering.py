@@ -19,9 +19,9 @@ class MeteredProvider(BaseProvider):
         self.name = inner.name
         self.model = inner.model
 
-    def chat(self, messages: list[dict[str, Any]], *, tools=None, max_tokens=4096, agent="") -> ChatResult:
+    def chat(self, messages: list[dict[str, Any]], *, tools=None, max_tokens=4096, agent="", **kw) -> ChatResult:
         t0 = time.monotonic()
-        res = self.inner.chat(messages, tools=tools, max_tokens=max_tokens, agent=agent)
+        res = self.inner.chat(messages, tools=tools, max_tokens=max_tokens, agent=agent, **kw)
         b = self.task.budget
         b.record_tokens(res.usage.total)
         b.tokens_in += res.usage.input_tokens

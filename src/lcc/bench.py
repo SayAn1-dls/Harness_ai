@@ -32,11 +32,11 @@ def load_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[dict[str,
     return tasks
 
 
-def _provider_for(name: str, task_dir: Path) -> BaseProvider:
+def _provider_for(name: str, task_dir: Path, shared: BaseProvider | None = None) -> BaseProvider:
     if name == "scripted":
         path = task_dir / "scripted.json"
         return ScriptedProvider(json.loads(path.read_text(encoding="utf-8")) if path.exists() else {})
-    return get_provider(name)
+    return shared or get_provider(name)
 
 
 def hidden_check(task_dir: Path, repo: Path) -> tuple[bool, str]:
@@ -53,7 +53,8 @@ def hidden_check(task_dir: Path, repo: Path) -> tuple[bool, str]:
     return proc.returncode == 0, (proc.stdout + proc.stderr)[-2000:]
 
 
-def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workdir: Path) -> dict[str, Any]:
+def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workdir: Path,
+            provider: BaseProvider | None = None) -> dict[str, Any]:
     task_dir: Path = meta["dir"]
     repo = workdir / meta["id"] / "repo"
     shutil.copytree(task_dir / "repo", repo)
@@ -62,10 +63,12 @@ def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workd
                        budget_overrides={"max_iterations": max_iterations})
     t0 = time.monotonic()
     error = ""
+    fatal = False
     try:
-        task = Orchestrator(store, _provider_for(provider_name, task_dir)).run(task)
-    except Exception as exc:  # recorded, not fatal to the benchmark
+        task = Orchestrator(store, _provider_for(provider_name, task_dir, provider)).run(task)
+    except Exception as exc:  # recorded; only account-level provider errors stop the benchmark
         error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc(limit=3)}"
+        fatal = bool(getattr(exc, "fatal", False))
         task = store.load_task() or task
     elapsed = round(time.monotonic() - t0, 1)
 
@@ -100,6 +103,7 @@ def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workd
         "workspace": str(repo),
         "check_output": "" if check_ok else check_out[-800:],
         "error": error,
+        "fatal": fatal,
     }
 
 
@@ -107,6 +111,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(rows) or 1
     solved = sum(r["resolved"] for r in rows)
     tokens = sum(r["tokens"] for r in rows)
+    tokens_in = sum(r["tokens_in"] for r in rows)
     return {
         "tasks": len(rows),
         "resolved": solved,
@@ -116,6 +121,8 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_tool_calls": round(sum(r["tool_calls"] for r in rows) / n, 1),
         "total_tokens": tokens,
         "cached_tokens": sum(r["tokens_cached"] for r in rows),
+        "cached_share": round(sum(r["tokens_cached"] for r in rows) / tokens_in, 3) if tokens_in else 0.0,
+        "avg_tokens_per_task": round(tokens / n),
         "resolutions_per_1M_tokens": round(solved / tokens * 1_000_000, 2) if tokens else None,
         "total_runtime_s": round(sum(r["runtime_s"] for r in rows), 1),
     }
@@ -128,6 +135,7 @@ def run_bench(
     max_iterations: int = 5,
     results_dir: Path | None = None,
     on_result=None,
+    provider: BaseProvider | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], Path | None]:
     workdir = Path(tempfile.mkdtemp(prefix="lcc-bench-"))
     rows = []
@@ -136,14 +144,20 @@ def run_bench(
         results_dir.mkdir(parents=True, exist_ok=True)
         out_path = results_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{provider_name}.jsonl"
     for meta in load_tasks(tasks_dir, only):
-        row = run_one(meta, provider_name, max_iterations, workdir)
+        if provider_name == "scripted" and not (meta["dir"] / "scripted.json").exists():
+            continue  # no recorded model replies: running it would only measure an empty script
+        row = run_one(meta, provider_name, max_iterations, workdir, provider)
         rows.append(row)
         if out_path:
             with out_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row) + "\n")
         if on_result:
             on_result(row)
+        if row["fatal"]:
+            break  # the same account error would fail every remaining task
     summary = summarize(rows)
+    if rows and rows[-1]["fatal"]:
+        summary["aborted"] = rows[-1]["error"].splitlines()[0]
     if out_path:
         with out_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"summary": summary, "provider": provider_name}) + "\n")
