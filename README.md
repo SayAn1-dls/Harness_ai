@@ -64,6 +64,21 @@ For each issue, the harness:
 
 A verified fix is committed on the task branch. Nothing is ever merged or pushed.
 
+### Auto mode: give it only a repository link
+
+```bash
+make auto REPO=https://github.com/owner/repo        # or paste just the repo link into `make run`
+make auto REPO=https://github.com/owner/repo PR=0   # keep the fixes as local branches, open no PRs
+```
+
+With no issue at all, the harness finds the work itself, fixes it, and opens pull requests:
+
+1. **Find.** It runs the repo's test suite (failing tests are real, reproducible problems). It runs ruff restricted to rules that flag actual defects (undefined names, mutable default arguments, late-binding closures, `is` with literals, eval/SQL/shell injection), never style. It then makes a token-bounded model audit of the most central source files (import-graph PageRank; 2 calls of about 4.5k tokens by default). The audit is asked only for defects with a concrete triggering input, and optimizations with a clear big-O cost. Findings without a trigger or with low confidence are dropped, and the rest are ranked and de-duplicated. The top `max_fixes` (3) are kept.
+2. **Fix and prove.** Each candidate runs through the normal pipeline on its own branch. A bug fix needs a test that fails on the original code and passes with the fix. An optimization must keep every existing test green. A "finding" that cannot be demonstrated is not verified, so it never becomes a PR.
+3. **Open PRs.** Each verified fix gets its own PR with the problem, the fix, and the verification evidence. The branch is pushed to the repository if the signed-in `gh` account may push, otherwise to a fork. The harness never merges: the maintainer reviews and decides.
+
+Settings live under `[auto]` in `lcc.config.toml` (`max_fixes`, `audit_calls`, `audit_chars`, `open_pr`, `pr_draft`). `LCC_OPEN_PR=0` disables PRs. Opening PRs needs the GitHub CLI signed in (`gh auth login`). Results go to `outputs/auto-<repo>.json`.
+
 ### Model configuration
 
 The model is defined in [`lcc.config.toml`](lcc.config.toml): provider, model, temperature `0.0`, seed, and optional fast/strong routing. The credential is read **only** from `AI_API_KEY` at runtime and is never stored in any file.

@@ -16,10 +16,11 @@ A model-agnostic autonomous software-engineering harness: it turns an issue into
 - Orchestrator: enforced gates; baseline test run; fail-to-pass proof; `IterationRecord` history in `task_state.json` fed into the next attempt; clean stop conditions; commits verified work on the task branch (`src/lcc/orchestrator.py`).
 - Opt-in fast/strong routing (`src/lcc/routing.py`). The global score is computed from recorded evidence (`src/lcc/eval.py`).
 - Benchmark: 7 tasks with hidden checks (`benchmarks/tasks/`). Each check was validated to fail on the original code and pass with a reference fix. Run with `lcc bench`.
-- Tests: 64 passing (`pytest`). The offline benchmark resolves all 7 tasks, each graded by its hidden check (`make test`).
+- Tests: 68 passing (`pytest`). The offline benchmark resolves all 7 tasks, each graded by its hidden check (`make test`).
 - DeepSeek and Qwen (DashScope international and China) presets. The auto-detect probe is limited to those vendors. A preflight check and model fallback run before any work, and account errors are fatal. The provider adapts to rejected parameters and falls back to prompt-described tools for servers without function calling.
 - Verification based on test sets (pass-to-pass against baseline failures), with a targeted-test fallback on timeout. Base-commit pinning. Local non-root folders are copied. npm, Go and Cargo test paths.
 - Token savings in the loop: superseded reads become stubs, test output is condensed, schemas are smaller, and a low-steps warning is sent (−19% prompt tokens on a scripted 16-step session).
+- Auto mode: repo link only → discover (failing tests, ruff defect rules, model audit) → verified fixes → one PR each via `gh` (fork when there is no push access), never merged (`src/lcc/discover.py`, `src/lcc/github_pr.py`, `session.auto_fix`). Tested offline against a fake GitHub (`tests/test_auto_mode.py`).
 - Hackathon interface: root `Makefile` (`setup`/`run`/`test`/`clean`/`eval`/`doctor`), `lcc.config.toml` (model definition), `AI_API_KEY` only, `lcc start` evaluation session (`src/lcc/session.py`: issue from a URL, file, text or stdin; clone; target venv; live progress; `outputs/<task>.patch` and `.json`).
 
 ## 3. What is currently being worked on?

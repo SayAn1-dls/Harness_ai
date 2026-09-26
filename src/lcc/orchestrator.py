@@ -371,6 +371,10 @@ class Orchestrator:
             return {"ok": True, "level": 5,
                     "message": f"[harness] fail-to-pass: {task.baseline['tests_failed']} test(s) failed before the change; the suite now passes."}
         tests = [f for f in changed if _is_test(f)]
+        if task.kind == "optimize" and (now or {}).get("tests_run") and not tests:
+            return {"ok": True, "level": 3, "message": (
+                f"[harness] behavior preserved: {now['tests_run']} existing test(s) pass with no regressions "
+                "(optimization; no behavior change to flip a test).")}
         if not tests:
             return {"ok": False, "level": 1, "message": (
                 "[harness] The tests that pass now also passed before your change, so they prove nothing about "
@@ -547,6 +551,7 @@ def create_task(
     issue_body: str = "",
     repository: str = "local/repo",
     budget_overrides: dict | None = None,
+    kind: str = "bug",
 ) -> TaskState:
     store.init_layout()
     task = TaskState(
@@ -556,6 +561,7 @@ def create_task(
         objective=objective,
         issue_body=issue_body,
         branch=f"agent/{task_id}",
+        kind=kind,
     )
     for k, v in (budget_overrides or {}).items():
         setattr(task.budget, k, v)

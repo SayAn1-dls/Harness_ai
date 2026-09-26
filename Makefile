@@ -6,6 +6,8 @@
 # make run ISSUE=<url|file|text> REPO=<path|git-url|owner/name>   one issue, non-interactive
 #          BASE=<sha>  (or REPO=<url>@<sha>, or a "Base commit: <sha>" line in the issue) pins the base commit
 # make run < issue.md               issue piped on stdin
+# make auto REPO=<github-url|path>  no issue: the agent finds bugs/optimizations, fixes them, opens one PR each
+#                                   (PR=0 keeps the verified fixes as local branches instead)
 # make test                         unit tests + offline end-to-end benchmark (no API key needed)
 # make eval                         live benchmark on the 7 fixture tasks (uses AI_API_KEY)
 # make doctor                       check python, git, config and credential presence
@@ -27,11 +29,12 @@ REPO     ?=
 BASE     ?=
 PROVIDER ?=
 TASK     ?=
+PR       ?=
 
-.PHONY: help setup run test eval doctor clean distclean
+.PHONY: help setup run auto test eval doctor clean distclean
 
 help:
-	@sed -n '1,12p' Makefile | sed 's/^# \{0,1\}//'
+	@sed -n '1,14p' Makefile | sed 's/^# \{0,1\}//'
 
 setup:
 	@echo "Setting up LCC harness..."
@@ -53,7 +56,17 @@ run:
 		$(if $(ISSUE),--issue "$(ISSUE)" --once) \
 		$(if $(REPO),--repo "$(REPO)") \
 		$(if $(BASE),--base "$(BASE)") \
-		$(if $(PROVIDER),--provider "$(PROVIDER)")
+		$(if $(PROVIDER),--provider "$(PROVIDER)") \
+		$(if $(filter 0 no false,$(PR)),--no-pr)
+
+auto:
+	@echo "Starting AI Harness (auto mode: find, fix, open pull requests)..."
+	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
+	@test -n "$(REPO)" || { echo "usage: make auto REPO=<github-url|path> [PR=0]"; exit 2; }
+	@AI_API_KEY="$$AI_API_KEY" $(RUN) start --auto --repo "$(REPO)" \
+		$(if $(BASE),--base "$(BASE)") \
+		$(if $(PROVIDER),--provider "$(PROVIDER)") \
+		$(if $(filter 0 no false,$(PR)),--no-pr)
 
 test:
 	@echo "Running tests..."

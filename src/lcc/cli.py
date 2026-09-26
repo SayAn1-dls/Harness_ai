@@ -202,11 +202,14 @@ def start(
     provider: str = typer.Option(None, "--provider", "-p", help="Override [model].provider from lcc.config.toml"),
     once: bool = typer.Option(False, "--once", help="Exit after one issue"),
     base: str = typer.Option(None, "--base", "-b", help="Base commit/ref to check out before fixing"),
+    auto: bool = typer.Option(False, "--auto", help="No issue: find bugs/optimizations in --repo, fix them, open PRs"),
+    pr: bool = typer.Option(None, "--pr/--no-pr", help="Open pull requests for verified fixes in auto mode"),
 ) -> None:
-    """Evaluation mode (what `make run` launches): read an issue, fix it in the repo, report the verified patch."""
+    """Evaluation mode (what `make run` launches): read an issue, fix it in the repo, report the verified patch.
+    Given only a repository link, it finds the problems itself, fixes them and opens pull requests."""
     from lcc.session import start as run_session
 
-    raise typer.Exit(run_session(issue or None, repo or None, provider, once, base or None))
+    raise typer.Exit(run_session(issue or None, repo or None, provider, once, base or None, auto, pr))
 
 
 @app.command()

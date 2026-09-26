@@ -53,3 +53,14 @@ prepare_env = true
 test_timeout = 900
 # One tiny completion before any work: a bad key, empty balance or unknown model is reported in seconds.
 preflight = true
+
+[auto]
+# Repo-only mode (`make auto REPO=<url>`, or paste just a repository link into `make run`): the harness finds
+# failing tests, static-analysis defects and model-audited bugs/optimizations, fixes the top ones, verifies
+# each (a test must fail before and pass after; optimizations must keep every existing test green), and opens
+# one pull request per verified fix. It never merges. LCC_OPEN_PR=0 or PR=0 keeps fixes as local branches.
+max_fixes = 3
+audit_calls = 2
+audit_chars = 18000
+open_pr = true
+pr_draft = false

@@ -41,10 +41,21 @@ class RunConfig:
 
 
 @dataclass
+class AutoConfig:
+    """Repo-only mode: find problems without an issue, fix them, open pull requests."""
+    max_fixes: int = 3
+    audit_calls: int = 2  # model calls spent auditing source files
+    audit_chars: int = 18_000  # source characters per audit call (~4.5k tokens)
+    open_pr: bool = True
+    pr_draft: bool = False
+
+
+@dataclass
 class Config:
     model: ModelConfig
     run: RunConfig
     path: Path | None = None
+    auto: AutoConfig = field(default_factory=AutoConfig)
 
     def resolve(self, rel: str) -> Path:
         p = Path(rel)
@@ -72,7 +83,11 @@ def load_config(path: Path | None = None) -> Config:
     model.base_url = env.get("LCC_BASE_URL") or model.base_url
     model.model_fast = env.get("LCC_MODEL_FAST") or model.model_fast
     model.model_strong = env.get("LCC_MODEL_STRONG") or model.model_strong
-    return Config(model=model, run=_pick(RunConfig, raw.get("run") or {}), path=path if path.is_file() else None)
+    auto = _pick(AutoConfig, raw.get("auto") or {})
+    if env.get("LCC_OPEN_PR"):
+        auto.open_pr = env["LCC_OPEN_PR"].strip().lower() not in {"0", "false", "no", "off"}
+    return Config(model=model, run=_pick(RunConfig, raw.get("run") or {}), path=path if path.is_file() else None,
+                  auto=auto)
 
 
 def api_key() -> str:

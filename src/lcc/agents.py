@@ -366,7 +366,10 @@ def coder_task_prompt(task: TaskState, plan: ImplementationPlan, diff: str) -> s
             line += f" Failing at baseline: {b['failed_ids'][:10]} (if unrelated to the issue, leave them alone)."
         if b.get("timed_out"):
             line += " The full suite is slow: run focused test files with run_test(target=...)."
-        if not b.get("tests_failed"):
+        if task.kind == "optimize":
+            line += (" This is a behavior-preserving optimization: results must not change and every existing test"
+                     " must keep passing. Add a test only if nothing covers the code you change.")
+        elif not b.get("tests_failed"):
             line += (" The existing suite does not catch this issue, so you MUST add or update a test that fails"
                      " without your fix and passes with it; the verifier checks this.")
         lines.append(line)

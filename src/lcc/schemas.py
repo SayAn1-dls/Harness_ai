@@ -309,6 +309,9 @@ class TaskState(BaseModel):
     branch: str = ""
     objective: str
     issue_body: str = ""
+    # "bug": needs fail-to-pass proof. "optimize": behavior-preserving change, proven by the existing tests
+    # passing with no regressions (a faster correct function has no failing test to flip).
+    kind: str = "bug"
     acceptance_criteria: list[AcceptanceCriterion] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     ambiguities: list[str] = Field(default_factory=list)
