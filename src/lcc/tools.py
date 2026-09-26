@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import functools
 import importlib.util
 import os
 import re
@@ -422,11 +423,23 @@ def _dangerous(command: str) -> bool:
     return any(b in c for b in banned)
 
 
+def test_python() -> str:
+    """Interpreter for the target repo's tests: its prepared venv when there is one, else the harness's own."""
+    return os.environ.get("LCC_TEST_PYTHON") or sys.executable
+
+
+@functools.lru_cache(maxsize=8)
+def _has_pytest(py: str) -> bool:
+    if py == sys.executable:
+        return importlib.util.find_spec("pytest") is not None
+    return subprocess.run([py, "-c", "import pytest"], capture_output=True).returncode == 0
+
+
 def detect_test_cmd(workspace: Path, target: str = "") -> list[str]:
-    py = sys.executable
+    py = test_python()
     if (workspace / "package.json").exists() and not list(workspace.glob("**/test_*.py")):
         return ["npm", "test", "--silent"]
-    if importlib.util.find_spec("pytest") is not None:
+    if _has_pytest(py):
         cmd = [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header", "-rN"]
         if target:
             return cmd + [target]

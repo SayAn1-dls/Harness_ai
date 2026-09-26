@@ -147,16 +147,19 @@ def pr(workspace: Path = typer.Option(Path("."), "--workspace")) -> None:
 
 @app.command()
 def bench(
-    provider: str = typer.Option(None, "--provider", "-p", help="mock | scripted | deepseek | gemini | openai | grok"),
+    provider: str = typer.Option(None, "--provider", "-p", help="auto | scripted | mock | deepseek | gemini | openai | anthropic | openrouter | groq | grok | custom"),
     task: list[str] = typer.Option(None, "--task", "-t", help="Run only these task ids"),
     max_iterations: int = typer.Option(5, "--max-iterations"),
     tasks_dir: Path = typer.Option(Path("benchmarks/tasks"), "--tasks-dir"),
     results_dir: Path = typer.Option(Path("benchmarks/results"), "--results-dir"),
+    min_resolved: int = typer.Option(0, "--min-resolved", help="Exit 1 if fewer tasks are resolved (for CI / make test)"),
 ) -> None:
     """Run the benchmark suite and grade each task with its hidden check."""
     from lcc.bench import run_bench
 
-    name = provider or os.environ.get("LCC_PROVIDER") or "mock"
+    from lcc.config import load_config
+
+    name = provider or load_config().model.provider
 
     def show(r: dict) -> None:
         mark = "[green]PASS[/]" if r["resolved"] else "[red]FAIL[/]"
@@ -169,6 +172,50 @@ def bench(
     console.print_json(json.dumps(summary))
     if out:
         console.print(f"results: {out}")
+    if summary["resolved"] < min_resolved:
+        console.print(f"[red]resolved {summary['resolved']} < required {min_resolved}[/]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def start(
+    issue: str = typer.Option(None, "--issue", "-i", help="GitHub issue URL, path to an issue file, or issue text"),
+    repo: str = typer.Option(None, "--repo", "-r", help="Target repository: local path, git URL, or owner/name"),
+    provider: str = typer.Option(None, "--provider", "-p", help="Override [model].provider from lcc.config.toml"),
+    once: bool = typer.Option(False, "--once", help="Exit after one issue"),
+) -> None:
+    """Evaluation mode (what `make run` launches): read an issue, fix it in the repo, report the verified patch."""
+    from lcc.session import start as run_session
+
+    raise typer.Exit(run_session(issue or None, repo or None, provider, once))
+
+
+@app.command()
+def doctor() -> None:
+    """Check the runtime: python, git, config, AI_API_KEY presence, provider resolution (no model call)."""
+    import shutil
+    import sys
+
+    from lcc.config import api_key, load_config
+    from lcc.model import ProviderError
+
+    cfg = load_config()
+    rows = [
+        ("python", sys.version.split()[0], sys.version_info >= (3, 11)),
+        ("git", shutil.which("git") or "missing", bool(shutil.which("git"))),
+        ("config", str(cfg.path or "built-in defaults"), True),
+        ("AI_API_KEY", "set" if api_key() else "missing", bool(api_key())),
+    ]
+    try:
+        p = get_provider()
+        rows.append(("model", f"{p.name} / {p.model} (temperature={cfg.model.temperature})", True))
+    except ProviderError as exc:
+        rows.append(("model", str(exc), False))
+    ok = True
+    for name, value, good in rows:
+        ok &= good
+        console.print(f"{'[green]ok [/]' if good else '[red]!! [/]'} {name:<11} {value}")
+    raise typer.Exit(0 if ok else 1)
 
 
 @app.command("dump-state")

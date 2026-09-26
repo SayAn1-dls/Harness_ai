@@ -112,10 +112,32 @@ def test_metering_charges_budget(tmp_path):
 
 
 def test_real_provider_requires_key(monkeypatch):
-    for k in ("LCC_API_KEY", "DEEPSEEK_API_KEY"):
+    for k in ("AI_API_KEY", "LCC_API_KEY", "DEEPSEEK_API_KEY", "LCC_PROVIDER"):
         monkeypatch.delenv(k, raising=False)
-    with pytest.raises(ProviderError, match="DEEPSEEK_API_KEY"):
+    with pytest.raises(ProviderError, match="AI_API_KEY"):
         get_provider("deepseek")
+    with pytest.raises(ProviderError, match="AI_API_KEY"):
+        get_provider("auto")
+
+
+def test_ai_api_key_and_config(monkeypatch, tmp_path):
+    from lcc.model import OpenAICompatibleProvider, detect_provider
+
+    cfg = tmp_path / "lcc.config.toml"
+    cfg.write_text('[model]\nprovider = "auto"\nmodel = "prescribed-model"\ntemperature = 0.0\nseed = 3\n')
+    monkeypatch.setenv("LCC_CONFIG", str(cfg))
+    for k in ("LCC_PROVIDER", "LCC_MODEL", "LCC_BASE_URL", "LCC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("AI_API_KEY", "AIza-test")
+    p = get_provider()
+    assert isinstance(p, OpenAICompatibleProvider)
+    assert (p.name, p.model, p.api_key, p.temperature, p.seed) == ("gemini", "prescribed-model", "AIza-test", 0.0, None)
+    monkeypatch.setenv("LCC_PROVIDER", "deepseek")
+    p = get_provider()
+    assert (p.name, p.seed) == ("deepseek", 3)
+    assert detect_provider("sk-ant-x") == "anthropic"
+    assert detect_provider("anything", base_url="http://localhost:8000/v1") == "custom"
+    assert detect_provider("sk-plain", probe=False) == "deepseek"
 
 
 # ---------------------------------------------------------------- orchestrator

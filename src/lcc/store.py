@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from lcc.constants import (
     AGENT_STATE_FILE,
@@ -31,6 +31,7 @@ class HarnessStore:
         self.docs = self.harness / DOCS_DIR
         self.research = self.harness / RESEARCH_DIR
         self.cache = self.harness / CACHE_DIR
+        self.on_event: Callable[[Event], None] | None = None
 
     def init_layout(self) -> None:
         for d in (self.state_dir, self.artifacts, self.docs, self.research, self.cache):
@@ -76,6 +77,11 @@ class HarnessStore:
         line = event.model_dump_json() + "\n"
         with self.events_path.open("a", encoding="utf-8") as fh:
             fh.write(line)
+        if self.on_event is not None:
+            try:
+                self.on_event(event)
+            except Exception:  # a display hook must never break the run
+                pass
 
     def events(self) -> list[Event]:
         if not self.events_path.exists():

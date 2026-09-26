@@ -16,3 +16,5 @@ harness/cache/
 *.tmp
 .DS_Store
 benchmarks/results/
+outputs/
+workspaces/

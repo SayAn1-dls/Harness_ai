@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 
 from lcc.model import BaseProvider, ChatResult, OpenAICompatibleProvider
 from lcc.schemas import Lane, TaskState
@@ -33,17 +32,20 @@ class RoutedProvider(BaseProvider):
 
 
 def maybe_route(provider: BaseProvider, task: TaskState) -> BaseProvider:
-    """Wrap with routing when LCC_MODEL_FAST / LCC_MODEL_STRONG are set for an OpenAI-compatible provider."""
+    """Wrap with routing when model_fast / model_strong are configured (lcc.config.toml or env) for an OpenAI-compatible provider."""
     if not isinstance(provider, OpenAICompatibleProvider):
         return provider
-    fast_model = os.environ.get("LCC_MODEL_FAST")
-    strong_model = os.environ.get("LCC_MODEL_STRONG")
+    from lcc.config import load_config
+
+    cfg = load_config().model
+    fast_model = cfg.model_fast
+    strong_model = cfg.model_strong
     if not fast_model and not strong_model:
         return provider
 
     def clone(model: str | None) -> BaseProvider | None:
         if not model:
             return None
-        return OpenAICompatibleProvider(provider.name, api_key=provider.api_key, base_url=provider.base_url, model=model)
+        return provider.with_model(model)
 
     return RoutedProvider(provider, task, fast=clone(fast_model), strong=clone(strong_model))

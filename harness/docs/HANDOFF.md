@@ -16,7 +16,8 @@ A model-agnostic autonomous software-engineering harness: it turns an issue into
 - Orchestrator: enforced gates; baseline test run; fail-to-pass proof; `IterationRecord` history in `task_state.json` fed into the next attempt; clean stop conditions; commits verified work on the task branch (`src/lcc/orchestrator.py`).
 - Opt-in fast/strong routing (`src/lcc/routing.py`). The global score is computed from recorded evidence (`src/lcc/eval.py`).
 - Benchmark: 7 tasks with hidden checks (`benchmarks/tasks/`). Each check was validated to fail on the original code and pass with a reference fix. Run with `lcc bench`.
-- Tests: 29 passing (`pytest`).
+- Tests: 32 passing (`pytest`).
+- Hackathon interface: root `Makefile` (`setup`/`run`/`test`/`clean`/`eval`/`doctor`), `lcc.config.toml` (model definition), `AI_API_KEY` only, `lcc start` evaluation session (`src/lcc/session.py`: issue from a URL, file, text or stdin; clone; target venv; live progress; `outputs/<task>.patch` and `.json`).
 
 ## 3. What is currently being worked on?
 
@@ -33,7 +34,7 @@ See `DECISIONS.md` (2026-09-26 entries).
 
 ## 6. What should the next agent do next?
 
-1. Put a key in `.env` (see `.env.example`), then run `lcc bench -p deepseek` (or `-p gemini`). Target: at least 5 of 7 resolved, failure_heavy resolved, ambiguous escalated.
+1. `export AI_API_KEY=...`, then `make eval` (or `make run ISSUE=<github issue url>`). Target: at least 5 of 7 resolved, failure_heavy resolved, ambiguous escalated.
 2. Read `benchmarks/results/*.jsonl` and `harness/artifacts/coder_*_transcript.json` in the kept workspaces for failures. Tune prompts and tools from the transcripts, not by guessing.
 3. Check whether Gemini's OpenAI-compatible endpoint accepts `content: null` on assistant tool-call messages and the tool schemas as sent. If not, adjust `ChatResult.assistant_message` and `ToolSpec` schemas.
 4. Record `tokens_cached` from the live runs, and keep the coder's system prefix byte-stable to maximize implicit prefix caching.

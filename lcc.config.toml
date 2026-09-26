@@ -1,0 +1,44 @@
+# LCC harness configuration: the single place the evaluation model is defined.
+# The API credential is NEVER stored here. It is read at runtime from the
+# AI_API_KEY environment variable (export AI_API_KEY="...").
+#
+# Environment variables override these values without editing this file:
+#   LCC_PROVIDER, LCC_MODEL, LCC_BASE_URL, LCC_MODEL_FAST, LCC_MODEL_STRONG
+
+[model]
+# auto      -> pick the provider from the AI_API_KEY format (see README, "Model configuration")
+# deepseek | gemini | openai | anthropic | openrouter | groq | grok | custom (needs base_url)
+provider = "auto"
+# Empty = the provider's default below. Set this to the model the organisers prescribe.
+model = ""
+# Empty = the provider's official OpenAI-compatible endpoint.
+base_url = ""
+# Text-only chat-completions with function calling. No image/audio/video input is ever sent.
+temperature = 0.0
+# Sent only to providers that accept it; makes runs as repeatable as the provider allows.
+seed = 7
+max_output_tokens = 4096
+# Optional routing: cheap model for intake/review/recovery, strong model for planning/coding on hard tasks.
+model_fast = ""
+model_strong = ""
+
+# Default model per provider when [model].model is empty.
+[model.defaults]
+deepseek = "deepseek-chat"
+gemini = "gemini-2.5-flash"
+openai = "gpt-4.1"
+anthropic = "claude-sonnet-5"
+openrouter = "deepseek/deepseek-chat"
+groq = "llama-3.3-70b-versatile"
+grok = "grok-4"
+
+[run]
+# Per issue: coder/recovery iterations and total token budget.
+max_iterations = 5
+token_budget = 300000
+coder_max_steps = 30
+# Where `make run` clones target repositories and writes patches.
+workspaces_dir = "workspaces"
+outputs_dir = "outputs"
+# Create an isolated venv for the target repo and install its dependencies before running tests.
+prepare_env = true

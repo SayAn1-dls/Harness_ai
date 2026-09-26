@@ -207,17 +207,54 @@ class ScriptedProvider(BaseProvider):
         return ["\n".join(str(m.get("content") or "") for m in msgs) for a, msgs in self.seen if a == agent]
 
 
-# name -> (base_url, default model, api-key env var)
-PRESETS: dict[str, tuple[str, str, str]] = {
-    "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat", "DEEPSEEK_API_KEY"),
-    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", "GEMINI_API_KEY"),
-    "openai": ("https://api.openai.com/v1", "gpt-4.1", "OPENAI_API_KEY"),
-    "grok": ("https://api.x.ai/v1", "grok-4", "XAI_API_KEY"),
+# name -> (base_url, default model, legacy api-key env var, accepts `seed`)
+PRESETS: dict[str, tuple[str, str, str, bool]] = {
+    "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat", "DEEPSEEK_API_KEY", True),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", "GEMINI_API_KEY", False),
+    "openai": ("https://api.openai.com/v1", "gpt-4.1", "OPENAI_API_KEY", True),
+    "anthropic": ("https://api.anthropic.com/v1", "claude-sonnet-5", "ANTHROPIC_API_KEY", False),
+    "openrouter": ("https://openrouter.ai/api/v1", "deepseek/deepseek-chat", "OPENROUTER_API_KEY", True),
+    "groq": ("https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", "GROQ_API_KEY", True),
+    "grok": ("https://api.x.ai/v1", "grok-4", "XAI_API_KEY", True),
+    "custom": ("", "", "", False),
 }
+
+# Unambiguous key prefixes. A bare `sk-` key is shared by several vendors and is resolved by probing.
+KEY_PREFIXES: list[tuple[str, str]] = [
+    ("sk-ant-", "anthropic"),
+    ("sk-or-", "openrouter"),
+    ("sk-proj-", "openai"),
+    ("sk-svcacct-", "openai"),
+    ("AIza", "gemini"),
+    ("xai-", "grok"),
+    ("gsk_", "groq"),
+]
+PROBE_ORDER = ["deepseek", "openai"]
+
+
+def detect_provider(key: str, base_url: str = "", probe: bool = True) -> str:
+    """Pick a preset from the credential's format; probe `GET /models` only for ambiguous `sk-` keys."""
+    if base_url:
+        return "custom"
+    for prefix, name in KEY_PREFIXES:
+        if key.startswith(prefix):
+            return name
+    if not probe:
+        return PROBE_ORDER[0]
+    for name in PROBE_ORDER:
+        try:
+            r = httpx.get(f"{PRESETS[name][0]}/models", headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        except httpx.HTTPError:
+            continue
+        if r.status_code == 200:
+            return name
+    raise ProviderError(
+        "could not identify the provider for AI_API_KEY; set [model].provider in lcc.config.toml or LCC_PROVIDER"
+    )
 
 
 class OpenAICompatibleProvider(BaseProvider):
-    """Chat-completions + function calling. Covers DeepSeek, Gemini (OpenAI-compat endpoint), OpenAI, xAI."""
+    """Text-only chat-completions + function calling. One adapter for every preset above."""
 
     def __init__(
         self,
@@ -226,23 +263,39 @@ class OpenAICompatibleProvider(BaseProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        temperature: float = 0.0,
+        seed: int | None = None,
         max_retries: int = 4,
         timeout: float = 180,
     ) -> None:
         if preset not in PRESETS:
             raise ProviderError(f"unknown provider preset {preset!r}; choose from {sorted(PRESETS)}")
-        default_url, default_model, key_env = PRESETS[preset]
+        from lcc.config import api_key as env_key
+
+        default_url, default_model, key_env, accepts_seed = PRESETS[preset]
         self.name = preset
-        self.api_key = api_key or os.environ.get("LCC_API_KEY") or os.environ.get(key_env) or ""
+        self.api_key = api_key or env_key(key_env)
         if not self.api_key:
-            raise ProviderError(f"{preset}: no API key. Set {key_env} (or LCC_API_KEY).")
+            raise ProviderError(f"{preset}: no API key. Export AI_API_KEY.")
         self.base_url = (base_url or os.environ.get("LCC_BASE_URL") or default_url).rstrip("/")
         self.model = model or os.environ.get("LCC_MODEL") or default_model
+        if not self.base_url or not self.model:
+            raise ProviderError(f"{preset}: base_url and model must be set in lcc.config.toml")
+        self.temperature = temperature
+        self.seed = seed if accepts_seed else None
         self.max_retries = max_retries
         self.timeout = timeout
 
+    def with_model(self, model: str) -> "OpenAICompatibleProvider":
+        return OpenAICompatibleProvider(
+            self.name, api_key=self.api_key, base_url=self.base_url, model=model,
+            temperature=self.temperature, seed=self.seed, max_retries=self.max_retries, timeout=self.timeout,
+        )
+
     def chat(self, messages, *, tools=None, max_tokens=4096, agent=""):
-        payload: dict[str, Any] = {"model": self.model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.1}
+        payload: dict[str, Any] = {"model": self.model, "messages": messages, "max_tokens": max_tokens, "temperature": self.temperature}
+        if self.seed is not None:
+            payload["seed"] = self.seed
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -291,9 +344,20 @@ class OpenAICompatibleProvider(BaseProvider):
 
 
 def get_provider(name: str | None = None) -> BaseProvider:
-    kind = (name or os.environ.get("LCC_PROVIDER") or "mock").lower()
+    """Build the provider from `lcc.config.toml` + environment. `name` overrides the configured provider."""
+    from lcc.config import api_key, load_config
+
+    cfg = load_config().model
+    kind = (name or cfg.provider or "auto").lower()
     if kind == "mock":
         return MockProvider()
-    if kind in {"openai_compat", "xai"}:
-        kind = {"xai": "grok"}.get(kind, "openai")
-    return OpenAICompatibleProvider(kind)
+    kind = {"xai": "grok", "openai_compat": "openai", "claude": "anthropic"}.get(kind, kind)
+    if kind == "auto":
+        key = api_key()
+        if not key:
+            raise ProviderError("no API key. Export AI_API_KEY (the harness never reads keys from committed files).")
+        kind = detect_provider(key, cfg.base_url)
+    model = cfg.model or cfg.defaults.get(kind) or None
+    return OpenAICompatibleProvider(
+        kind, base_url=cfg.base_url or None, model=model, temperature=cfg.temperature, seed=cfg.seed,
+    )
