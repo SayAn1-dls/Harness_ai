@@ -7,9 +7,12 @@
 #          BASE=<sha>  (or REPO=<url>@<sha>, or a "Base commit: <sha>" line in the issue) pins the base commit
 # make run < issue.md               issue piped on stdin
 # make auto REPO=<github-url|path>  no issue: the agent finds bugs/optimizations, fixes them, opens one PR each
-#                                   (PR=0 keeps the verified fixes as local branches instead)
+#                                   PR=0: local branches only; PR=1: open PRs even on repos you can't push to
 # make test                         unit tests + offline end-to-end benchmark (no API key needed)
 # make eval                         live benchmark on the 7 fixture tasks (uses AI_API_KEY)
+# make eval-real                    live benchmark on 20 real bug fixes from real repositories (uses AI_API_KEY)
+# make bench-check                  prove the real benchmark is sound: hidden tests fail before/pass after,
+#                                   the reference fix scores 20/20 and a do-nothing model scores 0/20 (no key)
 # make doctor                       check python, git, config and credential presence
 # make clean                        remove generated artefacts
 
@@ -31,10 +34,10 @@ PROVIDER ?=
 TASK     ?=
 PR       ?=
 
-.PHONY: help setup run auto test eval doctor clean distclean
+.PHONY: help setup run auto test eval eval-real bench-check doctor clean distclean
 
 help:
-	@sed -n '1,14p' Makefile | sed 's/^# \{0,1\}//'
+	@sed -n '1,17p' Makefile | sed 's/^# \{0,1\}//'
 
 setup:
 	@echo "Setting up LCC harness..."
@@ -66,7 +69,8 @@ auto:
 	@AI_API_KEY="$$AI_API_KEY" $(RUN) start --auto --repo "$(REPO)" \
 		$(if $(BASE),--base "$(BASE)") \
 		$(if $(PROVIDER),--provider "$(PROVIDER)") \
-		$(if $(filter 0 no false,$(PR)),--no-pr)
+		$(if $(filter 0 no false,$(PR)),--no-pr) \
+		$(if $(filter 1 yes true,$(PR)),--pr)
 
 test:
 	@echo "Running tests..."
@@ -80,6 +84,19 @@ eval:
 	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
 	@AI_API_KEY="$$AI_API_KEY" $(RUN) bench $(if $(PROVIDER),-p "$(PROVIDER)") $(foreach t,$(TASK),-t $(t))
 
+eval-real:
+	@echo "Live benchmark on 20 real bug fixes (hidden tests from the real fix commits)..."
+	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
+	@AI_API_KEY="$$AI_API_KEY" $(RUN) bench --tasks-dir benchmarks/real $(if $(PROVIDER),-p "$(PROVIDER)") $(foreach t,$(TASK),-t $(t))
+
+bench-check:
+	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
+	@$(RUN) bench --validate --tasks-dir benchmarks/real
+	@echo "Reference fixes through the full harness (oracle, not a model): expect 20/20"
+	@$(RUN) bench -p oracle --tasks-dir benchmarks/real --min-resolved 20 --results-dir benchmarks/results
+	@echo "Do-nothing model: expect 0/20"
+	@$(RUN) bench -p mock --tasks-dir benchmarks/real --max-iterations 1 --results-dir benchmarks/results | tee /dev/stderr | grep -q '"resolved": 0,'
+
 doctor:
 	@$(RUN) doctor
 
@@ -92,4 +109,5 @@ clean:
 	find . -path ./$(VENV) -prune -o -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 
 distclean: clean
-	rm -rf $(VENV)
+	rm -rf $(VENV) benchmarks/.cache
+	-@command -v docker >/dev/null 2>&1 && docker volume ls -q --filter name=lcc-venv- | xargs docker volume rm >/dev/null 2>&1 || true

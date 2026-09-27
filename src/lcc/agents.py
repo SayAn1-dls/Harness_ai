@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -208,20 +209,26 @@ def run_intake(task: TaskState, provider: BaseProvider, store: HarnessStore, cri
         ambiguities=ambiguities,
         blocking_ambiguities=[str(x) for x in as_list(data.get("blocking_ambiguities"))],
         risk=str(data.get("risk") or "low").lower() if str(data.get("risk") or "low").lower() in {"low", "medium", "high", "critical"} else "medium",
-        score=_intake_score(data, criteria, reqs),
+        score=_intake_score(data, criteria, reqs, f"{task.objective}\n{task.issue_body}"),
     )
     store.write_json("intake.json", result)
     return result
 
 
-def _intake_score(data: dict[str, Any], criteria: list[AcceptanceCriterion], reqs: list[str]) -> float:
-    req = 25 if reqs else 10
-    intent = 20 if data.get("intent") else 8
-    ac = 20 if criteria else 0
-    amb = 15 if "ambiguities" in data else 8
-    cons = 10 if data.get("constraints") is not None else 5
-    scope = 10 if data.get("problem") else 4
-    return req + intent + ac + amb + cons + scope
+GENERIC_CRITERION = re.compile(r"^(all )?(the )?(tests?|unit tests?|suite) (pass|passes|are green)|^(the )?(issue|bug|problem) is "
+                               r"(resolved|fixed|solved)|^it works|^fix(ed)? the (bug|issue)", re.I)
+
+
+def _intake_score(data: dict[str, Any], criteria: list[AcceptanceCriterion], reqs: list[str], issue: str = "") -> float:
+    """How testable the analysis is, measured on the criteria themselves (not on which JSON fields exist):
+    40 for at least one concrete criterion, 20 for two or more, 20 for a stated problem, 20 when the criteria
+    reuse concrete terms from the issue (identifiers, values, error names)."""
+    concrete = [c for c in criteria if len(c.text.strip()) > 15 and not GENERIC_CRITERION.search(c.text.strip())]
+    anchors = {t.lower() for t in re.findall(r"`([^`]+)`|\b(\w*[_.(]\w*|\d+(?:\.\d+)?|[A-Z]\w*Error)\b", issue)
+               for t in t if t and len(t) > 1}
+    grounded = any(a in c.text.lower() for c in concrete for a in anchors) if anchors else bool(concrete)
+    return (40 if concrete else 0) + (20 if len(concrete) >= 2 else 0) + \
+        (20 if len(str(data.get("problem") or "")) > 20 else 0) + (20 if grounded else 0)
 
 
 def intake_gate(result: IntakeResult) -> str:

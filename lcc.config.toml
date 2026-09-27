@@ -53,6 +53,10 @@ prepare_env = true
 test_timeout = 900
 # One tiny completion before any work: a bad key, empty balance or unknown model is reported in seconds.
 preflight = true
+# "none": the target's code runs on this machine with credentials stripped from its environment and git guarded.
+# "docker": the target's install, tests and shell commands run in a container with no network, no credentials and
+# only the workspace mounted. Use it for repositories you do not trust (e.g. `make auto` on a stranger's repo).
+sandbox = "none"
 
 [auto]
 # Repo-only mode (`make auto REPO=<url>`, or paste just a repository link into `make run`): the harness finds
@@ -62,5 +66,7 @@ preflight = true
 max_fixes = 3
 audit_calls = 2
 audit_chars = 18000
+# On a repository you cannot push to, PRs need a confirmation (interactive) or PR=1 (non-interactive).
 open_pr = true
-pr_draft = false
+pr_draft = true
+max_open_prs = 3

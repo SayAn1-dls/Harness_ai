@@ -156,9 +156,19 @@ def bench(
     tasks_dir: Path = typer.Option(Path("benchmarks/tasks"), "--tasks-dir"),
     results_dir: Path = typer.Option(Path("benchmarks/results"), "--results-dir"),
     min_resolved: int = typer.Option(0, "--min-resolved", help="Exit 1 if fewer tasks are resolved (for CI / make test)"),
+    validate: bool = typer.Option(False, "--validate", help="Only check the real tasks: hidden tests fail at base, pass at fix"),
 ) -> None:
     """Run the benchmark suite and grade each task with its hidden check."""
-    from lcc.bench import run_bench
+    from lcc.bench import run_bench, validate_real
+
+    if validate:
+        rows = validate_real(tasks_dir, task or None)
+        for r in rows:
+            mark = "[green]valid[/]" if r["valid"] else "[red]INVALID[/]"
+            console.print(f"{mark} {r['id']:<32} fails_on_base={r['fails_on_base']} passes_on_fix={r['passes_on_fix']} {r['detail']}")
+        bad = sum(not r["valid"] for r in rows)
+        console.print(f"{len(rows) - bad}/{len(rows)} real tasks valid")
+        raise typer.Exit(1 if bad else 0)
 
     from lcc.config import load_config
 
@@ -166,7 +176,7 @@ def bench(
 
     name = provider or load_config().model.provider
     shared = None
-    if name not in {"scripted", "mock"}:
+    if name not in {"scripted", "mock", "oracle"}:
         try:  # resolve and check the model once: a bad key must not burn through every task
             shared = get_provider(name)
             shared.preflight()

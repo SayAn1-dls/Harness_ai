@@ -16,7 +16,9 @@ A model-agnostic autonomous software-engineering harness: it turns an issue into
 - Orchestrator: enforced gates; baseline test run; fail-to-pass proof; `IterationRecord` history in `task_state.json` fed into the next attempt; clean stop conditions; commits verified work on the task branch (`src/lcc/orchestrator.py`).
 - Opt-in fast/strong routing (`src/lcc/routing.py`). The global score is computed from recorded evidence (`src/lcc/eval.py`).
 - Benchmark: 7 tasks with hidden checks (`benchmarks/tasks/`). Each check was validated to fail on the original code and pass with a reference fix. Run with `lcc bench`.
-- Tests: 87 passing (including `tests/test_qa_regressions.py` from the 2026-09-27 QA pass) (`pytest`). The offline benchmark resolves all 7 tasks, each graded by its hidden check (`make test`).
+- Tests: 90 passing (macOS and Linux container), CI on 3.11/3.12/3.13.
+- Real benchmark: 20 validated real bug fixes (`benchmarks/real/`, `make bench-check`: valid 20/20, oracle 20/20, do-nothing 0/20).
+- Security: credential-free child environments, a git guard, and an optional Docker sandbox (`sandbox = "docker"`). (`pytest`). The offline benchmark resolves all 7 tasks, each graded by its hidden check (`make test`).
 - DeepSeek and Qwen (DashScope international and China) presets. The auto-detect probe is limited to those vendors. A preflight check and model fallback run before any work, and account errors are fatal. The provider adapts to rejected parameters and falls back to prompt-described tools for servers without function calling.
 - Verification based on test sets (pass-to-pass against baseline failures), with a targeted-test fallback on timeout. Base-commit pinning. Local non-root folders are copied. npm, Go and Cargo test paths.
 - Token savings in the loop: superseded reads become stubs, test output is condensed, schemas are smaller, and a low-steps warning is sent (−19% prompt tokens on a scripted 16-step session).
@@ -40,7 +42,7 @@ See `DECISIONS.md` (2026-09-26 and 2026-09-27 entries).
 
 ## 6. What should the next agent do next?
 
-1. With a DeepSeek or Qwen key, run `make doctor`. The preflight names the provider and model. Then run `make eval`. The target is at least 5 of 7 resolved, `failure_heavy` resolved and `ambiguous` escalated.
+1. With a DeepSeek or Qwen key: `make doctor`, then **`make eval-real`** (20 real tasks) and `make eval` (7 toy). Report the real-task resolve rate first.
 2. Tune from `harness/artifacts/coder_*_transcript.json` in the kept workspaces. Check `tokens_cached` / `cached_share` in the `make eval` summary; the coder prefix is byte-stable, and a test asserts it.
 3. Run `make setup && make test` in a clean Linux container (`python:3.11-slim` + git). This has not been done yet: Docker was not running.
 4. Later: an incremental repo index (mtime/hash cache), and resuming a task mid-state (`lcc run` assumes RECEIVED).

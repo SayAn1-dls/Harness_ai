@@ -1,0 +1,17 @@
+{
+  "id": "mi-interleave-evenly-empty",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "interleave_evenly([]) crashes",
+  "repo": "https://github.com/more-itertools/more-itertools",
+  "base": "5d946b3590bfe92f1465c1b9b9830dd434745c84",
+  "fix": "f51a53bfd2fe9504063a33ef5f4a73e30d82d0e2",
+  "hidden_tests": [
+    "tests/test_more.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_more.py::InterleaveEvenlyTests::test_no_iterables"
+  ],
+  "source": "https://github.com/more-itertools/more-itertools/commit/f51a53bfd2fe9504063a33ef5f4a73e30d82d0e2",
+  "deps": []
+}

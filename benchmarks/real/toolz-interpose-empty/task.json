@@ -1,0 +1,17 @@
+{
+  "id": "toolz-interpose-empty",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "interpose() on an empty sequence raises StopIteration",
+  "repo": "https://github.com/pytoolz/toolz",
+  "base": "55ce42dc3b6f786ed9d4e38633cc5cfe3622a526",
+  "fix": "d2eba0374a452c2b18fe188b04527e22bda3548c",
+  "hidden_tests": [
+    "toolz/tests/test_itertoolz.py"
+  ],
+  "fail_to_pass": [
+    "toolz/tests/test_itertoolz.py::test_interpose_empty"
+  ],
+  "source": "https://github.com/pytoolz/toolz/commit/d2eba0374a452c2b18fe188b04527e22bda3548c",
+  "deps": []
+}

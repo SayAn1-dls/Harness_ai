@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,11 +15,92 @@ from pathlib import Path
 from typing import Any
 
 from lcc.model import BaseProvider, ScriptedProvider, get_provider
+from lcc.sandbox import child_env
 from lcc.orchestrator import Orchestrator, create_task
 from lcc.schemas import TaskStatus
 from lcc.store import HarnessStore
 
 SUCCESS = {TaskStatus.HUMAN_REVIEW, TaskStatus.VERIFIED, TaskStatus.PR_READY}
+CACHE = Path(__file__).resolve().parents[2] / "benchmarks" / ".cache"
+
+
+# ------------------------------------------------------------------ real-repository tasks
+# task.json with "repo" + "base" + "fix": the workspace is the real repository at `base` (the parent of a real bug-fix
+# commit); grading runs the test files of the `fix` commit (`hidden_tests`), which fail on `base` and pass on `fix`.
+def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    proc = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True, timeout=900)
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args[:3])} failed: {proc.stderr.strip()[-300:]}")
+    return proc
+
+
+def _mirror(url: str) -> Path:
+    name = re.sub(r"[^\w.-]+", "_", url.rstrip("/").removesuffix(".git").split("github.com/")[-1])
+    mirror = CACHE / "repos" / name
+    if not mirror.exists():
+        mirror.parent.mkdir(parents=True, exist_ok=True)
+        _git(mirror.parent, "clone", "--quiet", "--no-checkout", url, str(mirror))
+    return mirror
+
+
+def materialize(meta: dict[str, Any], dest: Path) -> None:
+    """Create the task workspace: a copy of the fixture, or the real repository checked out at its base commit."""
+    if "repo" not in meta:
+        shutil.copytree(meta["dir"] / "repo", dest)
+        return
+    mirror = _mirror(meta["repo"])
+    if _git(mirror, "cat-file", "-e", f"{meta['fix']}^{{commit}}", check=False).returncode != 0:
+        _git(mirror, "fetch", "--quiet", "origin")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _git(dest.parent, "clone", "--quiet", "--no-checkout", str(mirror), str(dest))
+    _git(dest, "checkout", "--quiet", "--detach", meta["base"])
+    _git(dest, "remote", "remove", "origin")  # nothing from a benchmark run can be pushed anywhere
+
+
+def bench_python(tasks: list[dict[str, Any]]) -> str:
+    """One isolated interpreter for the real-repository tasks (pytest + their declared test deps)."""
+    deps = sorted({"pytest", *(d for t in tasks for d in t.get("deps") or [])})
+    venv = CACHE / "venv"
+    py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    marker = venv / ".deps"
+    if not py.exists():
+        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+    if not marker.exists() or marker.read_text(encoding="utf-8") != " ".join(deps):
+        subprocess.run([str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", *deps],
+                       check=True, capture_output=True, timeout=900)
+        marker.write_text(" ".join(deps), encoding="utf-8")
+    return str(py)
+
+
+def hidden_check_real(meta: dict[str, Any], repo: Path, py: str) -> tuple[bool, str]:
+    """Put the fix commit's versions of the hidden test files in place and run them."""
+    for rel in meta["hidden_tests"]:
+        blob = subprocess.run(["git", "show", f"{meta['fix']}:{rel}"], cwd=repo, capture_output=True, timeout=60)
+        if blob.returncode != 0:
+            return False, f"cannot read {rel} from the fix commit"
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_bytes(blob.stdout)
+    env = child_env() | {"PYTHONPATH": str(repo), "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "-rfE", "--tb=short",
+                           *meta["hidden_tests"]], cwd=repo, text=True, capture_output=True, env=env, timeout=600)
+    return proc.returncode == 0, (proc.stdout + proc.stderr)[-2000:]
+
+
+def validate_real(tasks_dir: Path, only: list[str] | None = None) -> list[dict[str, Any]]:
+    """Check every real task: its hidden tests must fail at `base` and pass at `fix`."""
+    tasks = [t for t in load_tasks(tasks_dir, only) if "repo" in t]
+    py = bench_python(tasks)
+    rows = []
+    for meta in tasks:
+        work = Path(tempfile.mkdtemp(prefix="lcc-validate-")) / "repo"
+        materialize(meta, work)
+        fails_on_base, _ = hidden_check_real(meta, work, py)
+        _git(work, "checkout", "--quiet", "--force", "--detach", meta["fix"])
+        passes_on_fix, out = hidden_check_real(meta, work, py)
+        rows.append({"id": meta["id"], "fails_on_base": not fails_on_base, "passes_on_fix": passes_on_fix,
+                     "valid": (not fails_on_base) and passes_on_fix, "detail": "" if passes_on_fix else out[-400:]})
+        shutil.rmtree(work.parent, ignore_errors=True)
+    return rows
 
 
 def load_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[dict[str, Any]]:
@@ -30,6 +113,20 @@ def load_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[dict[str,
         meta["issue"] = (d / "issue.md").read_text(encoding="utf-8")
         tasks.append(meta)
     return tasks
+
+
+def oracle_provider(meta: dict[str, Any], repo: Path) -> BaseProvider:
+    """NOT a model: replays the real fix commit (source + tests) through the normal coder tools. It checks the harness
+    machinery on real repositories (baseline, proof, lint, review, grading), independently of model quality."""
+    from lcc.model import ToolCall
+
+    files = _git(repo, "diff", "--name-only", meta["base"], meta["fix"]).stdout.split()
+    writes = []
+    for rel in files:
+        blob = subprocess.run(["git", "show", f"{meta['fix']}:{rel}"], cwd=repo, capture_output=True, timeout=60)
+        if blob.returncode == 0 and rel.endswith(".py"):
+            writes.append(ToolCall("write_file", {"path": rel, "content": blob.stdout.decode("utf-8", "replace")}))
+    return ScriptedProvider({"coder": [writes, [ToolCall("finish", {"summary": "oracle: replayed the reference fix"})]]})
 
 
 def _provider_for(name: str, task_dir: Path, shared: BaseProvider | None = None) -> BaseProvider:
@@ -57,7 +154,12 @@ def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workd
             provider: BaseProvider | None = None) -> dict[str, Any]:
     task_dir: Path = meta["dir"]
     repo = workdir / meta["id"] / "repo"
-    shutil.copytree(task_dir / "repo", repo)
+    materialize(meta, repo)
+    real = "repo" in meta
+    if real:
+        os.environ["LCC_TEST_PYTHON"] = meta["_python"]
+    else:
+        os.environ.pop("LCC_TEST_PYTHON", None)
     store = HarnessStore(repo)
     task = create_task(store, meta["id"], meta["objective"], repo, issue_body=meta["issue"],
                        budget_overrides={"max_iterations": max_iterations})
@@ -65,7 +167,8 @@ def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workd
     error = ""
     fatal = False
     try:
-        task = Orchestrator(store, _provider_for(provider_name, task_dir, provider)).run(task)
+        llm = oracle_provider(meta, repo) if provider_name == "oracle" else _provider_for(provider_name, task_dir, provider)
+        task = Orchestrator(store, llm).run(task)
     except Exception as exc:  # recorded; only account-level provider errors stop the benchmark
         error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc(limit=3)}"
         fatal = bool(getattr(exc, "fatal", False))
@@ -74,7 +177,7 @@ def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workd
 
     check_ok, check_out = (False, "")
     if meta["expect"] == "resolve":
-        check_ok, check_out = hidden_check(task_dir, repo)
+        check_ok, check_out = hidden_check_real(meta, repo, meta["_python"]) if real else hidden_check(task_dir, repo)
         resolved = task.status in SUCCESS and check_ok
     else:
         resolved = task.status == TaskStatus.ESCALATED
@@ -83,6 +186,7 @@ def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workd
     return {
         "id": meta["id"],
         "category": meta["category"],
+        "source": meta.get("source", "fixture"),
         "expect": meta["expect"],
         "status": task.status.value,
         "stop_reason": task.stop_reason,
@@ -143,7 +247,15 @@ def run_bench(
     if results_dir:
         results_dir.mkdir(parents=True, exist_ok=True)
         out_path = results_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{provider_name}.jsonl"
-    for meta in load_tasks(tasks_dir, only):
+    tasks = load_tasks(tasks_dir, only)
+    if provider_name == "scripted":
+        tasks = [t for t in tasks if (t["dir"] / "scripted.json").exists()]
+    real = [t for t in tasks if "repo" in t]
+    if real:
+        py = bench_python(real)
+        for t in real:
+            t["_python"] = py
+    for meta in tasks:
         if provider_name == "scripted" and not (meta["dir"] / "scripted.json").exists():
             continue  # no recorded model replies: running it would only measure an empty script
         row = run_one(meta, provider_name, max_iterations, workdir, provider)

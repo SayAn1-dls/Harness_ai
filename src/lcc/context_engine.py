@@ -321,7 +321,7 @@ def retrieve(
             break
 
     snapshot_id = "ctx_" + hashlib.sha1(f"{query}|{','.join(files)}".encode()).hexdigest()[:10]
-    metric = _score_snapshot(files, ranked, toks, tests, rules, index, used, token_budget, q, sym_hits)
+    metric = _score_snapshot(files, ranked, toks, tests, rules, index, used, token_budget, q, sym_hits, query)
     return ContextSnapshot(
         snapshot_id=snapshot_id,
         created_at=utcnow(),
@@ -336,6 +336,20 @@ def retrieve(
     )
 
 
+NAMED = re.compile(r"`([^`]{2,80})`|\b([A-Za-z_][A-Za-z0-9_]*(?:_[A-Za-z0-9_]+|[a-z][A-Z][A-Za-z0-9]*)|[\w/.-]+\.(?:py|js|ts|tsx|go|rs|java|rb))\b")
+
+
+def named_targets(query: str, index: RepoIndex) -> set[str]:
+    """Files that define a symbol, or are a file, the issue names explicitly (`code`, snake_case, CamelCase, x.py)."""
+    names: set[str] = set()
+    for tick, word in NAMED.findall(query):
+        for tok in re.findall(r"[A-Za-z_][\w./-]*", tick) if tick else [word]:
+            names.add(tok.split("(")[0].rsplit(".", 1)[-1] if not re.search(r"\.(py|js|ts|tsx|go|rs|java|rb)$", tok) else tok)
+    targets = {s.path for s in index.symbols if s.name in names}
+    targets |= {f for f in index.files if Path(f).name in names or f in names or Path(f).stem in names}
+    return targets
+
+
 def _score_snapshot(
     files: list[str],
     ranked: list[str],
@@ -347,36 +361,34 @@ def _score_snapshot(
     budget: int,
     q: set[str],
     sym_hits: set[str],
+    query: str = "",
 ) -> dict[str, float]:
-    """Blueprint weights: files 20, symbols 15, deps 15, requirements 15, rules 10, tests 10, history 5, tokens 10."""
+    """Every component is measured against the issue and the repository; nothing is a constant.
+    named 25: files defining what the issue names explicitly are in the snapshot (0.6 when it names nothing).
+    symbols 20: symbols from the issue text defined in the snapshot. deps 20: imports of the top files included.
+    requirements 20: issue vocabulary present in the repo that the snapshot covers. tests 15: a related test included."""
     chosen = set(files)
-    want = ranked[: min(5, len(ranked))]
-    rel_files = 20 * (sum(1 for f in want if f in chosen) / len(want)) if want else 0.0
+    targets = named_targets(query, index)
+    named = 25 * (len(targets & chosen) / len(targets)) if targets else 15.0
     found_syms = {s.name.lower() for s in index.symbols if s.path in chosen} & sym_hits
-    rel_syms = 15 * (len(found_syms) / len(sym_hits)) if sym_hits else 10.0
+    rel_syms = 20 * (len(found_syms) / len(sym_hits)) if sym_hits else 12.0
     needed = covered = 0
     for f in files[:8]:
         deps = index.graph.get(f, set())
         needed += len(deps)
         covered += sum(1 for d in deps if d in chosen)
-    dep_cov = 15 * covered / needed if needed else 15.0
+    dep_cov = 20 * covered / needed if needed else 20.0
     repo_vocab = set().union(*toks.values()) if toks else set()
     answerable = q & repo_vocab
     covered_q = answerable & set().union(*(toks[f] for f in files if f in toks)) if files else set()
-    req = 15 * len(covered_q) / len(answerable) if answerable else 0.0
-    rule_cov = 10.0
-    test_cov = 10.0 if tests or not index.tests else 0.0
-    hist = 3.0  # history engine not implemented yet
-    efficiency = max(0.0, 10 - (used / max(1, budget)) * 4)
+    req = 20 * len(covered_q) / len(answerable) if answerable else 0.0
+    test_cov = 15.0 if tests or not index.tests else 0.0
     parts = {
-        "relevant_files": round(rel_files, 2),
+        "named_targets": round(named, 2),
         "relevant_symbols": round(rel_syms, 2),
         "dependency_coverage": round(dep_cov, 2),
         "requirement_coverage": round(req, 2),
-        "rule_coverage": rule_cov,
         "test_coverage": test_cov,
-        "historical_relevance": hist,
-        "token_efficiency": round(efficiency, 2),
     }
     parts["total"] = round(sum(parts.values()), 2)
     return parts

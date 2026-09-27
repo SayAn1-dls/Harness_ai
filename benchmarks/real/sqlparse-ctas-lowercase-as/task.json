@@ -1,0 +1,17 @@
+{
+  "id": "sqlparse-ctas-lowercase-as",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "Lowercase 'as' in CREATE TABLE ... AS SELECT disables function grouping",
+  "repo": "https://github.com/andialbrecht/sqlparse",
+  "base": "f80af6a4007f11ada847218df8c29dc859238290",
+  "fix": "111b35cffcfe44b16fbdd27507f165bafd52a2a1",
+  "hidden_tests": [
+    "tests/test_grouping.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_grouping.py::test_grouping_alias_ctas_lowercase_as"
+  ],
+  "source": "https://github.com/andialbrecht/sqlparse/commit/111b35cffcfe44b16fbdd27507f165bafd52a2a1",
+  "deps": []
+}

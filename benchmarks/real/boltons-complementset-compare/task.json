@@ -1,0 +1,17 @@
+{
+  "id": "boltons-complementset-compare",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "Comparing complement sets with <= / >= raises AttributeError",
+  "repo": "https://github.com/mahmoud/boltons",
+  "base": "b5c495bec206741ec25cd82ecc869e0b59bb0d10",
+  "fix": "ec1ff9f6728f5f857402b294c218be731c62af5f",
+  "hidden_tests": [
+    "tests/test_setutils.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_setutils.py::test_complement_set"
+  ],
+  "source": "https://github.com/mahmoud/boltons/commit/ec1ff9f6728f5f857402b294c218be731c62af5f",
+  "deps": []
+}

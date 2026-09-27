@@ -1,0 +1,19 @@
+{
+  "id": "parse-hex-binary-prefix",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "Hex value that looks like a binary prefix is misparsed",
+  "repo": "https://github.com/r1chardj0n3s/parse",
+  "base": "1e800a155192713c2bef05adb7f53b1a067af440",
+  "fix": "fe986ffabf6d60b837516c1bc982303951bb7938",
+  "hidden_tests": [
+    "test_parse.py"
+  ],
+  "fail_to_pass": [
+    "test_parse.py::TestParse::test_hex_looks_like_binary_issue65"
+  ],
+  "source": "https://github.com/r1chardj0n3s/parse/commit/fe986ffabf6d60b837516c1bc982303951bb7938",
+  "deps": [
+    "pytest-cov"
+  ]
+}

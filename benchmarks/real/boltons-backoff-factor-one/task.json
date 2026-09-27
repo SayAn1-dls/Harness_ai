@@ -1,0 +1,17 @@
+{
+  "id": "boltons-backoff-factor-one",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "backoff(..., factor=1.0) raises ZeroDivisionError",
+  "repo": "https://github.com/mahmoud/boltons",
+  "base": "57cb026b7f47cd2765a0d5acdc83849ed5f1f6a3",
+  "fix": "ead236e278ca0466bf468de746b5960fb12d7e5b",
+  "hidden_tests": [
+    "tests/test_iterutils.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_iterutils.py::test_backoff_constant_factor"
+  ],
+  "source": "https://github.com/mahmoud/boltons/commit/ead236e278ca0466bf468de746b5960fb12d7e5b",
+  "deps": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "mi-sliced-negative",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "sliced() with a negative size returns a wrong result",
+  "repo": "https://github.com/more-itertools/more-itertools",
+  "base": "ed86a1528aa015f219f8d3385ea2ebd3f63a5212",
+  "fix": "958990e22c4ab6daf434d89cf2b86d7a4a7a9e3c",
+  "hidden_tests": [
+    "tests/test_more.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_more.py::SlicedTests::test_negative"
+  ],
+  "source": "https://github.com/more-itertools/more-itertools/commit/958990e22c4ab6daf434d89cf2b86d7a4a7a9e3c",
+  "deps": []
+}

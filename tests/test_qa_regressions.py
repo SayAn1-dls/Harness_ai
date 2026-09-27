@@ -129,7 +129,7 @@ def test_string_none_from_a_model_does_not_escalate():
     task = TaskState(task_id="T", repository="r", workspace=str(root), objective="x", issue_body="y")
     r = run_intake(task, ScriptedProvider({"intake": [{"problem": "p", "intent": "i", "requirements": "one",
                                                        "acceptance_criteria": "text", "blocking_ambiguities": "none"}]}), store)
-    assert r.blocking_ambiguities == [] and r.requirements == ["one"] and intake_gate(r) == "ok"
+    assert r.blocking_ambiguities == [] and r.requirements == ["one"] and intake_gate(r) != "escalate"
     assert run_planner(task, ScriptedProvider({"planner": [{"steps": [{"order": "first", "files": "a.py"}],
                                                             "allowed_files": "a.py"}]}), "", store).allowed_files == ["a.py"]
     f = run_reviewer(task, ScriptedProvider({"reviewer": [{"findings": [{"confidence": "high", "evidence": "q"}]}]}), "d", store)
@@ -167,3 +167,61 @@ def test_failed_ids_with_spaces_and_issue_files_with_slashes(tmp_path):
         assert not is_repo_only("issues/bug")
     finally:
         os.chdir(cwd)
+
+
+def test_target_code_cannot_read_credentials_or_change_git_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_API_KEY", "sk-secret-value")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "i"]):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    t = ToolRegistry(root, ToolPolicy({"read_repository": True, "shell": True}), Budget())
+    assert t.shell('echo "[$AI_API_KEY][$GITHUB_TOKEN]"')["stdout"].strip() == "[][]"
+    sneaky = t.shell("""python3 -c "import subprocess; print(subprocess.run(['git','reset','--hard']).returncode)" """)
+    assert sneaky["stdout"].strip() == "1" and "blocked by the LCC harness" in sneaky["stderr"]
+    assert t.shell("git log --oneline -1")["returncode"] == 0
+    other = tmp_path / "other"
+    ok = t.shell(f"""python3 -c "import subprocess; print(subprocess.run(['git','init','-q','{other}']).returncode)" """)
+    assert ok["stdout"].strip() == "0"  # git elsewhere (a test suite's temp repos) still works
+
+
+def _docker_ok() -> bool:
+    import shutil as _sh
+
+    return bool(_sh.which("docker")) and subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+
+
+@pytest.mark.skipif(not _docker_ok(), reason="Docker is not running")
+def test_docker_sandbox_isolates_target_code(tmp_path, monkeypatch):
+    from rich.console import Console
+
+    from lcc.config import load_config
+    from lcc.model import MockProvider
+    from lcc.session import parse_issue, solve
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AI_API_KEY", "sk-secret-value")
+    monkeypatch.setenv("LCC_SANDBOX", "none")  # registers a restore even though solve() sets it directly
+    monkeypatch.setenv("LCC_SANDBOX_VOLUME", "lcc-venv-test")
+    root = tmp_path / "repo"
+    shutil_copy = __import__("shutil").copytree
+    shutil_copy(Path(__file__).parent / "fixtures" / "mini_repo", root)
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "i"]):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    cfg = load_config()
+    cfg.run.sandbox = "docker"
+    cfg.run.outputs_dir = str(tmp_path / "out")
+    summary = solve(parse_issue("Fix add so it returns the sum\n\nadd(2, 3) should be 5"), root, cfg, MockProvider(),
+                    Console(quiet=True))
+    assert summary["resolved"] is True  # the whole pipeline works with every test run inside the container
+    import os as _os
+
+    t = ToolRegistry(root, ToolPolicy({"read_repository": True, "shell": True}), Budget())
+    probe = t.shell("python -c \"import os, socket; print(repr(os.environ.get('AI_API_KEY')));"
+                    " print(os.path.exists(os.path.expanduser('~/.ssh')) or os.path.exists('" + _os.path.expanduser("~") + "'));"
+                    " socket.create_connection(('1.1.1.1', 53), 2)\"")
+    lines = probe["stdout"].split()
+    assert lines[:2] == ["None", "False"]  # no key, no home directory
+    assert probe["returncode"] != 0 and ("unreachable" in probe["stderr"] or "OSError" in probe["stderr"])

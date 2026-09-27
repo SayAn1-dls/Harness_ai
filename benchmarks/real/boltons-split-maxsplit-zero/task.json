@@ -1,0 +1,17 @@
+{
+  "id": "boltons-split-maxsplit-zero",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "split(iterator, maxsplit=0) returns the iterator object",
+  "repo": "https://github.com/mahmoud/boltons",
+  "base": "3970a80f63807392e512340c25dc2db473bcba70",
+  "fix": "4aa77cddb5d06def130df6f09aefab4018fa487c",
+  "hidden_tests": [
+    "tests/test_iterutils.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_iterutils.py::TestSplit::test_maxsplit_zero_returns_unsplit_values"
+  ],
+  "source": "https://github.com/mahmoud/boltons/commit/4aa77cddb5d06def130df6f09aefab4018fa487c",
+  "deps": []
+}

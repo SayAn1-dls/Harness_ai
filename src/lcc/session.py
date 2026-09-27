@@ -22,6 +22,7 @@ from lcc.config import Config, api_key, load_config
 from lcc.model import BaseProvider, ProviderError, get_provider
 from lcc.orchestrator import Orchestrator, create_task
 from lcc.schemas import Event, TaskState, TaskStatus
+from lcc.sandbox import child_env
 from lcc.store import HarnessStore
 from lcc.workspace import Workspace
 
@@ -30,6 +31,7 @@ GH_REPO = re.compile(r"^(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?
 REPO_LINE = re.compile(r"^\s*(?:repo|repository)\s*:\s*(\S+)\s*$", re.I | re.M)
 BASE_LINE = re.compile(r"^\s*(?:base[ _-]?commit|base[ _-]?sha|base|commit)\s*:\s*([0-9a-fA-F]{7,40})\s*$", re.I | re.M)
 REF_SUFFIX = re.compile(r"^(?P<repo>.+?)@(?P<ref>[\w.-]+)$")
+GIT_EXCLUDES = ("/harness/", "*.egg-info/", "__pycache__/", ".pytest_cache/", "*.pyc", "node_modules/")
 COPY_IGNORE = shutil.ignore_patterns(".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", "harness", ".mypy_cache")
 SUCCESS = {TaskStatus.HUMAN_REVIEW, TaskStatus.VERIFIED, TaskStatus.PR_READY}
 END_MARKERS = {"END", "EOF", "."}
@@ -160,11 +162,12 @@ def prepare_node(repo: Path, console: Console) -> None:
         return
     console.print("[cyan]installing npm dependencies[/]")
     cmd = ["npm", "ci"] if (repo / "package-lock.json").exists() else ["npm", "install"]
+    env = child_env(repo)  # install scripts are code from the repository: no credentials
     proc = subprocess.run(cmd + ["--no-audit", "--no-fund", "--loglevel=error"], cwd=repo, text=True,
-                          capture_output=True, timeout=1800)
+                          capture_output=True, timeout=1800, env=env)
     if proc.returncode != 0 and cmd[1] == "ci":
         subprocess.run(["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"], cwd=repo,
-                       capture_output=True, timeout=1800)
+                       capture_output=True, timeout=1800, env=env)
 
 
 TEST_EXTRAS = ("test", "tests", "testing", "dev")
@@ -220,7 +223,7 @@ def prepare_env(repo: Path, venv: Path, console: Console) -> str | None:
 
     def pip(*args: str) -> bool:
         proc = subprocess.run([str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", *args],
-                              cwd=repo, text=True, capture_output=True, timeout=1800)
+                              cwd=repo, text=True, capture_output=True, timeout=1800, env=child_env(repo))
         return proc.returncode == 0
 
     if (repo / "pyproject.toml").exists() or (repo / "setup.py").exists() or (repo / "setup.cfg").exists():
@@ -255,10 +258,18 @@ def _progress(console: Console):
     return show
 
 
-def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console: Console) -> dict:
-    task_id = issue.task_id
+def setup_env(repo: Path, cfg: Config, console: Console) -> None:
+    """Where the target's code runs: a Docker sandbox, or an isolated venv on this machine (or the harness python)."""
     test_py = None
-    if cfg.run.prepare_env:
+    os.environ.pop("LCC_SANDBOX", None)
+    if cfg.run.sandbox == "docker":
+        from lcc.sandbox import docker_prepare
+
+        os.environ["LCC_SANDBOX"] = "docker"
+        os.environ["LCC_SANDBOX_VOLUME"] = "lcc-venv-" + re.sub(r"[^\w.-]", "_", repo.name)
+        console.print("[cyan]sandbox:[/] docker (no network, no credentials, only the workspace mounted)")
+        test_py = docker_prepare(repo, declared_test_extras(repo)[0])
+    elif cfg.run.prepare_env:
         try:
             test_py = prepare_env(repo, cfg.resolve(cfg.run.workspaces_dir) / f".venv-{repo.name}", console)
         except Exception as exc:  # fall back to the harness interpreter
@@ -267,6 +278,11 @@ def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console
         os.environ["LCC_TEST_PYTHON"] = test_py
     else:
         os.environ.pop("LCC_TEST_PYTHON", None)
+
+
+def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console: Console) -> dict:
+    task_id = issue.task_id
+    setup_env(repo, cfg, console)
 
     store = HarnessStore(repo)
     origin, stashed = _prepare_repo(repo, console)
@@ -312,10 +328,12 @@ def _prepare_repo(repo: Path, console: Console) -> tuple[str, bool]:
     user's uncommitted changes so they are neither committed into the fix nor lost to a rollback."""
     Workspace(repo).ensure_git()
     exclude = repo / ".git" / "info" / "exclude"
-    if exclude.parent.is_dir():
+    if exclude.parent.is_dir():  # harness state and build artefacts of the env setup never enter the fix commit
         text = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-        if "/harness/" not in text.split():
-            exclude.write_text(text + ("" if text.endswith("\n") or not text else "\n") + "/harness/\n", encoding="utf-8")
+        missing = [p for p in GIT_EXCLUDES if p not in text.split()]
+        if missing:
+            exclude.write_text(text + ("" if text.endswith("\n") or not text else "\n") + "\n".join(missing) + "\n",
+                               encoding="utf-8")
     origin = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     stashed = False
     if _git(repo, "status", "--porcelain", "--", ".", ":!harness").stdout.strip():
@@ -445,8 +463,33 @@ def pr_body(cand, summary: dict) -> str:
     return "\n\n".join(lines[:2]) + "\n\n" + "\n".join(lines[2:])
 
 
+def _pr_permission(repo: Path, cfg: Config, console: Console, wanted: bool, explicit: bool, n: int) -> bool:
+    """PRs on someone else's repository are outward-facing: ask first (or require PR=1), and respect a cap."""
+    from lcc.github_pr import repo_access
+
+    if not wanted or n == 0:
+        return False
+    try:
+        slug, can_push, mine = repo_access(repo)
+    except Exception as exc:  # noqa: BLE001 - not a GitHub repo or gh missing: keep branches only
+        console.print(f"[yellow]pull requests disabled: {exc}[/]")
+        return False
+    if mine >= cfg.auto.max_open_prs:
+        console.print(f"[yellow]you already have {mine} open PR(s) on {slug} (cap {cfg.auto.max_open_prs}); "
+                      "keeping the fixes as local branches[/]")
+        return False
+    if can_push or explicit:
+        return True
+    if sys.stdin.isatty():
+        kind = "draft " if cfg.auto.pr_draft else ""
+        answer = input(f"Open up to {n} {kind}pull request(s) on {slug} from your fork? [y/N] ").strip().lower()
+        return answer in {"y", "yes"}
+    console.print(f"[yellow]{slug} is not your repository: not opening PRs without PR=1 (fixes kept as branches)[/]")
+    return False
+
+
 def auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, *, open_prs: bool = True,
-             base: str = "") -> dict:
+             base: str = "", explicit_pr: bool = False) -> dict:
     """Repo link only: clone, find problems, fix and verify each, open one PR per verified fix."""
     from lcc.discover import discover
     from lcc.github_pr import open_pull_request
@@ -455,13 +498,7 @@ def auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, *
     repo = resolve_repo(spec, cfg.resolve(cfg.run.workspaces_dir), console)
     if base or ref:
         checkout_base(repo, base or ref, console)
-    if cfg.run.prepare_env:
-        try:
-            py = prepare_env(repo, cfg.resolve(cfg.run.workspaces_dir) / f".venv-{repo.name}", console)
-            if py:
-                os.environ["LCC_TEST_PYTHON"] = py
-        except Exception as exc:  # noqa: BLE001
-            console.print(f"[yellow]environment preparation failed ({exc}); using the harness python[/]")
+    setup_env(repo, cfg, console)  # discovery runs the target's tests too: same sandbox as the fixes
     console.print(Panel.fit(f"[bold]auto mode[/] {repo}\nfinding bugs, security issues and clear optimizations; "
                             f"up to {cfg.auto.max_fixes} fix(es), each verified" +
                             (", one pull request per verified fix" if open_prs else " (pull requests disabled)"),
@@ -477,6 +514,7 @@ def auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, *
     console.print(table if found else "[green]No provable problems found.[/] Nothing to fix.")
 
     results = []
+    open_prs = _pr_permission(repo, cfg, console, open_prs, explicit_pr, len(found)) if found else False
     for i, cand in enumerate(found, 1):
         slug = re.sub(r"[^a-z0-9]+", "-", cand.title.lower()).strip("-")[:40]
         issue = Issue(title=cand.title, body=cand.issue_text(), id=f"AUTO-{i}-{slug}",
@@ -590,7 +628,7 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
         if not spec:
             console.print("[red]auto mode needs a repository:[/] make auto REPO=<url|path>")
             return 2
-        out = auto_fix(spec, cfg, provider, console, open_prs=prs, base=base_arg or "")
+        out = auto_fix(spec, cfg, provider, console, open_prs=prs, base=base_arg or "", explicit_pr=bool(open_prs))
         return 0 if out["fixed"] or not out["candidates"] else 1
     interactive = sys.stdin.isatty() and not issue_arg
     if not issue_arg and not sys.stdin.isatty():
@@ -606,7 +644,8 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
             return status
         if is_repo_only(raw) and not repo_arg:
             try:
-                out = auto_fix(raw.strip(), cfg, provider, console, open_prs=prs, base=base_arg or "")
+                out = auto_fix(raw.strip(), cfg, provider, console, open_prs=prs, base=base_arg or "",
+                               explicit_pr=bool(open_prs))
                 status = 0 if out["fixed"] or not out["candidates"] else 1
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]auto mode failed:[/] {exc}")

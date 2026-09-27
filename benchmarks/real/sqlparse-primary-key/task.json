@@ -1,0 +1,17 @@
+{
+  "id": "sqlparse-primary-key",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "PRIMARY KEY is not tokenized as one keyword",
+  "repo": "https://github.com/andialbrecht/sqlparse",
+  "base": "fc4b0beab89c5598d556572cb6db0165affb017b",
+  "fix": "46971e5a804b29e7dbd437155a8ceffab8ef1cd5",
+  "hidden_tests": [
+    "tests/test_regressions.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_regressions.py::test_primary_key_issue740"
+  ],
+  "source": "https://github.com/andialbrecht/sqlparse/commit/46971e5a804b29e7dbd437155a8ceffab8ef1cd5",
+  "deps": []
+}

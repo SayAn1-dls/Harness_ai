@@ -1,0 +1,17 @@
+{
+  "id": "boltons-bits-length",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "Bits accepts values that do not fit in the declared length",
+  "repo": "https://github.com/mahmoud/boltons",
+  "base": "e66cade323f5c11cebb4bd0f099e634b245adccd",
+  "fix": "c1c25da365cf14878cf5317147e7a09b5d124df5",
+  "hidden_tests": [
+    "tests/test_mathutils.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_mathutils.py::test_bits_len_bound"
+  ],
+  "source": "https://github.com/mahmoud/boltons/commit/c1c25da365cf14878cf5317147e7a09b5d124df5",
+  "deps": []
+}

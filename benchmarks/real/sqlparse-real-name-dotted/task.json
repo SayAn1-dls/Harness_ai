@@ -1,0 +1,17 @@
+{
+  "id": "sqlparse-real-name-dotted",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "get_real_name() wrong for names with more than two dotted parts",
+  "repo": "https://github.com/andialbrecht/sqlparse",
+  "base": "df8e28495a87954a9d52de70c33ef7225c53b28f",
+  "fix": "f66d12c245412f28c58f045b646eb53c0e691b8b",
+  "hidden_tests": [
+    "tests/test_parse.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_parse.py::test_get_real_name_multi_part_dotted"
+  ],
+  "source": "https://github.com/andialbrecht/sqlparse/commit/f66d12c245412f28c58f045b646eb53c0e691b8b",
+  "deps": []
+}

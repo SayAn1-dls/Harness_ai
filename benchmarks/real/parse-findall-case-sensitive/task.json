@@ -1,0 +1,19 @@
+{
+  "id": "parse-findall-case-sensitive",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "findall() ignores case_sensitive=True",
+  "repo": "https://github.com/r1chardj0n3s/parse",
+  "base": "27db6b3498aeee80aa87c083dda76f2df2d87fa4",
+  "fix": "19689cf5b4e0b025821be2e59e0bff0ab5977361",
+  "hidden_tests": [
+    "test_parse.py"
+  ],
+  "fail_to_pass": [
+    "test_parse.py::TestFindall::test_case_sensitivity"
+  ],
+  "source": "https://github.com/r1chardj0n3s/parse/commit/19689cf5b4e0b025821be2e59e0bff0ab5977361",
+  "deps": [
+    "pytest-cov"
+  ]
+}

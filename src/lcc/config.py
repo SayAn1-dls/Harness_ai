@@ -38,6 +38,9 @@ class RunConfig:
     test_timeout: int = 900
     # Send one tiny completion before starting work (fails fast on a bad key, no balance, unknown model).
     preflight: bool = True
+    # "none": target code runs on this machine with credentials stripped and git guarded.
+    # "docker": target code (install, tests, shell) runs in a container with no network and no credentials.
+    sandbox: str = "none"
 
 
 @dataclass
@@ -47,7 +50,8 @@ class AutoConfig:
     audit_calls: int = 2  # model calls spent auditing source files
     audit_chars: int = 18_000  # source characters per audit call (~4.5k tokens)
     open_pr: bool = True
-    pr_draft: bool = False
+    pr_draft: bool = True  # maintainers see a draft first; mark it ready yourself
+    max_open_prs: int = 3  # never have more than this many open harness PRs on one repository
 
 
 @dataclass
@@ -83,11 +87,12 @@ def load_config(path: Path | None = None) -> Config:
     model.base_url = env.get("LCC_BASE_URL") or model.base_url
     model.model_fast = env.get("LCC_MODEL_FAST") or model.model_fast
     model.model_strong = env.get("LCC_MODEL_STRONG") or model.model_strong
+    run = _pick(RunConfig, raw.get("run") or {})
+    run.sandbox = (env.get("LCC_SANDBOX") or run.sandbox or "none").lower()
     auto = _pick(AutoConfig, raw.get("auto") or {})
     if env.get("LCC_OPEN_PR"):
         auto.open_pr = env["LCC_OPEN_PR"].strip().lower() not in {"0", "false", "no", "off"}
-    return Config(model=model, run=_pick(RunConfig, raw.get("run") or {}), path=path if path.is_file() else None,
-                  auto=auto)
+    return Config(model=model, run=run, path=path if path.is_file() else None, auto=auto)
 
 
 def api_key() -> str:

@@ -1,0 +1,20 @@
+{
+  "id": "mi-one-falsy-exception",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "one()/only() ignore a falsy custom exception",
+  "repo": "https://github.com/more-itertools/more-itertools",
+  "base": "9ed3dbb0ae527230cd156d91d0af305478558fba",
+  "fix": "def2dabea858b6ecb84ee0c52e6e07929f2c409c",
+  "hidden_tests": [
+    "tests/test_more.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_more.py::OneTests::test_falsy_custom_exception",
+    "tests/test_more.py::OneTests::test_too_long_does_not_evaluate_repr",
+    "tests/test_more.py::OnlyTests::test_falsy_custom_exception",
+    "tests/test_more.py::OnlyTests::test_too_long_does_not_evaluate_repr"
+  ],
+  "source": "https://github.com/more-itertools/more-itertools/commit/def2dabea858b6ecb84ee0c52e6e07929f2c409c",
+  "deps": []
+}

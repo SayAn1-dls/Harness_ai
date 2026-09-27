@@ -1,0 +1,17 @@
+{
+  "id": "toolz-partition-all-bad-len",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "partition_all silently produces bad output when __len__ is wrong",
+  "repo": "https://github.com/pytoolz/toolz",
+  "base": "1fb2b9f1b69ab664a264944f4eafc290acce127d",
+  "fix": "5a7e078c941c990dcaca53ac6920e5d5c0b1475f",
+  "hidden_tests": [
+    "toolz/tests/test_itertoolz.py"
+  ],
+  "fail_to_pass": [
+    "toolz/tests/test_itertoolz.py::test_partition_all"
+  ],
+  "source": "https://github.com/pytoolz/toolz/commit/5a7e078c941c990dcaca53ac6920e5d5c0b1475f",
+  "deps": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "sqlparse-strip-comments-only",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "strip_comments leaves a comment when the SQL is only comments",
+  "repo": "https://github.com/andialbrecht/sqlparse",
+  "base": "1b323879f87207946e4782812e2e1254b1c0c659",
+  "fix": "73c8ba3ae88b608d39740c0776fb15064232258e",
+  "hidden_tests": [
+    "tests/test_format.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_format.py::TestFormat::test_strip_comments_single"
+  ],
+  "source": "https://github.com/andialbrecht/sqlparse/commit/73c8ba3ae88b608d39740c0776fb15064232258e",
+  "deps": []
+}

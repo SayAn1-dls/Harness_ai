@@ -67,7 +67,7 @@ class Orchestrator:
         self.last_verification: VerificationResult | None = None
         self.last_changed: list[str] = []
         self.scope_expansions: list[str] = []
-        self.scores_history: list[float] = []
+        self.failed_history: list[int] = []  # failing tests per attempt
         self.review_rejections = 0
         self.intake_score = 0.0
 
@@ -116,12 +116,9 @@ class Orchestrator:
             if ok and task.lane != Lane.A:
                 self._review(task)
             judge = self._judge(task, ok)
-            score = global_task_score(
-                task, self.intake_score, self.snapshot, self.plan, self.last_verification, judge,
-                self.findings, self.last_changed,
-            )
+            score = global_task_score(task, self.plan, self.last_verification, self.last_changed)
             task.global_score = score["total"]
-            self.scores_history.append(task.global_score)
+            self.failed_history.append(int(task.verification.get("tests_failed") or 0))
             self.store.save_sidecar("verification", {"score": score, "judge": judge.model_dump(mode="json")})
             passed = judge.decision == JudgeDecision.PASS and ok
             if not passed and (task.iteration >= task.budget.max_iterations or task.budget.exhausted()):
@@ -545,8 +542,8 @@ class Orchestrator:
             return StopCondition.BUDGET_EXCEEDED
         if task.repeated_failure_count >= 2:
             return StopCondition.SAME_FAILURE_REPEATED
-        h = self.scores_history
-        if len(h) >= 3 and h[-1] < h[-2] - 5 and h[-2] < h[-3] - 5:
+        h = self.failed_history
+        if len(h) >= 3 and h[-1] > h[-2] > h[-3]:  # every attempt breaks more tests: stop digging
             return StopCondition.CONFIDENCE_DECREASING
         return None
 

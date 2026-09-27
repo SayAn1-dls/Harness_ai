@@ -1,0 +1,17 @@
+{
+  "id": "boltons-singularize-ss",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "singularize() mangles words ending in 'ss'",
+  "repo": "https://github.com/mahmoud/boltons",
+  "base": "55dfe5077bcb5fa76611b5f2a557ea6c442ad87c",
+  "fix": "1e61524a798ea73632029a013a7686036d5c126f",
+  "hidden_tests": [
+    "tests/test_strutils.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_strutils.py::test_singularize_double_s"
+  ],
+  "source": "https://github.com/mahmoud/boltons/commit/1e61524a798ea73632029a013a7686036d5c126f",
+  "deps": []
+}

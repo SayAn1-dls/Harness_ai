@@ -1,0 +1,17 @@
+{
+  "id": "mi-last-reversed-none",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "last() fails when __reversed__ is None",
+  "repo": "https://github.com/more-itertools/more-itertools",
+  "base": "c834d6e4a0c4280b7b7750cb0de8dd8acb3d4c2c",
+  "fix": "cca32949f12d473fd823e37a5530c30d2faa1332",
+  "hidden_tests": [
+    "tests/test_more.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_more.py::LastTests::test_reversed_is_none"
+  ],
+  "source": "https://github.com/more-itertools/more-itertools/commit/cca32949f12d473fd823e37a5530c30d2faa1332",
+  "deps": []
+}

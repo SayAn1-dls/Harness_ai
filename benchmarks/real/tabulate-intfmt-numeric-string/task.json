@@ -1,0 +1,18 @@
+{
+  "id": "tabulate-intfmt-numeric-string",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "intfmt crashes on numeric strings in an integer column",
+  "repo": "https://github.com/astanin/python-tabulate",
+  "base": "95ae5eb61ef969749e904c90ab429003238d6212",
+  "fix": "92cb7096adaf162de9cbf7da6b432bc72cf68819",
+  "hidden_tests": [
+    "test/test_output.py"
+  ],
+  "fail_to_pass": [
+    "test/test_output.py::test_intfmt_with_colors",
+    "test/test_output.py::test_intfmt_with_string_as_integer"
+  ],
+  "source": "https://github.com/astanin/python-tabulate/commit/92cb7096adaf162de9cbf7da6b432bc72cf68819",
+  "deps": []
+}

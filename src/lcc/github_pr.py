@@ -44,6 +44,15 @@ def github_slug(repo: Path) -> str:
     return f"{m.group(1)}/{m.group(2)}"
 
 
+def repo_access(repo: Path) -> tuple[str, bool, int]:
+    """(owner/name, may the signed-in account push, how many open PRs that account already has there)."""
+    slug = github_slug(repo)
+    can_push = _run(["gh", "api", f"repos/{slug}", "--jq", ".permissions.push"], repo, check=False) == "true"
+    mine = _run(["gh", "pr", "list", "--repo", slug, "--author", "@me", "--state", "open", "--json", "number",
+                 "--jq", "length"], repo, check=False)
+    return slug, can_push, int(mine) if mine.isdigit() else 0
+
+
 def open_pull_request(repo: Path, branch: str, title: str, body: str, *, draft: bool = False,
                       remote_branch: str | None = None) -> str:
     """Push `branch` and open a PR against the repository's default branch. Pushes to the repository itself

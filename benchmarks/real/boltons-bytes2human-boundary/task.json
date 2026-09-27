@@ -1,0 +1,17 @@
+{
+  "id": "boltons-bytes2human-boundary",
+  "category": "real",
+  "expect": "resolve",
+  "objective": "bytes2human() does not roll over at exact powers of 1024",
+  "repo": "https://github.com/mahmoud/boltons",
+  "base": "8a2a93d8213e1fa4da30c8167ab1a18caad17a17",
+  "fix": "766b5547392fe8d54c1e000098499dc556bb5cb7",
+  "hidden_tests": [
+    "tests/test_strutils.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_strutils.py::test_bytes2human"
+  ],
+  "source": "https://github.com/mahmoud/boltons/commit/766b5547392fe8d54c1e000098499dc556bb5cb7",
+  "deps": []
+}

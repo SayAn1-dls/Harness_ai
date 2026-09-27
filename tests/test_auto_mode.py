@@ -104,7 +104,7 @@ def test_auto_mode_finds_fixes_and_opens_prs(tmp_path, monkeypatch):
             new_str="    assert append_item(1) == [1]\n\ndef test_calls_do_not_share_state():\n    append_item(1)\n    assert append_item(2) == [2]\n")],
         [tc("finish", summary="The default list was shared between calls; use None.")],
     ]})
-    out = auto_fix("https://github.com/acme/demo", cfg, provider, Console(quiet=True))
+    out = auto_fix("https://github.com/acme/demo", cfg, provider, Console(quiet=True), explicit_pr=True)
 
     assert out["candidates"] == 2 and out["fixed"] == 2, json.dumps(out["results"], indent=1)
     assert out["prs"] == ["https://github.com/acme/demo/pull/1", "https://github.com/acme/demo/pull/2"]
@@ -112,6 +112,7 @@ def test_auto_mode_finds_fixes_and_opens_prs(tmp_path, monkeypatch):
     assert not any(line.startswith("pr merge") for line in calls.splitlines())
     create = [line for line in calls.splitlines() if line.startswith("pr create")]
     assert "--repo acme/demo --base main --head bot:lcc/auto-1-mean-divides-by-n-1" in create[0]
+    assert calls.count("--draft") == 2  # maintainers see drafts first
     assert "## Verification" in create[0] or "Verification" in calls
     fork_branches = subprocess.run(["git", "branch", "--list"], cwd=fork, text=True, capture_output=True).stdout
     assert "lcc/auto-1-mean-divides-by-n-1" in fork_branches and "lcc/auto-2-" in fork_branches
@@ -121,3 +122,23 @@ def test_auto_mode_finds_fixes_and_opens_prs(tmp_path, monkeypatch):
     diff = subprocess.run(["git", "show", "--stat", "--format=", first], cwd=fork, text=True, capture_output=True).stdout
     assert "stats.py" in diff and "calc.py" not in diff  # one fix per PR
     assert json.loads((tmp_path / "out" / f"auto-{Path(out['repo']).name}.json").read_text())["fixed"] == 2
+
+
+def test_foreign_repo_needs_explicit_permission(tmp_path, monkeypatch):
+    _upstream, fork, gh_log = _fake_github(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    cfg = load_config()
+    cfg.run.prepare_env = False
+    cfg.run.workspaces_dir = str(tmp_path / "ws")
+    cfg.run.outputs_dir = str(tmp_path / "out")
+    cfg.auto.audit_calls = 0  # static analysis finds the mutable default
+    provider = ScriptedProvider({"coder": [
+        [tc("edit_file", path="calc.py", old_str="def append_item(x, bucket=[]):\n",
+            new_str="def append_item(x, bucket=None):\n    if bucket is None:\n        bucket = []\n"),
+         tc("edit_file", path="tests/test_basic.py", old_str="    assert append_item(1) == [1]\n",
+            new_str="    assert append_item(1) == [1]\n\ndef test_no_shared_state():\n    append_item(1)\n    assert append_item(2) == [2]\n")],
+        [tc("finish", summary="shared default list")]]})
+    out = auto_fix("https://github.com/acme/demo", cfg, provider, Console(quiet=True))  # no PR=1, not a TTY
+    assert out["fixed"] == 1 and out["prs"] == []
+    assert "pr create" not in gh_log.read_text()
+    assert subprocess.run(["git", "branch", "--list"], cwd=fork, text=True, capture_output=True).stdout == ""

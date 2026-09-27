@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from lcc.sandbox import child_env, docker_enabled, docker_prefix
 from lcc.schemas import Budget, TaskState
 
 if TYPE_CHECKING:
@@ -432,13 +433,15 @@ class ToolRegistry:
         return self._run(["/bin/sh", "-c", command], timeout=max(1, min(int(timeout or 120), 600)))
 
     def _run(self, cmd: list[str], timeout: int = 300) -> dict[str, Any]:
-        env = os.environ.copy()
+        # Code from the target repo runs here: no credentials in its environment, git guarded in the workspace,
+        # and `python` / `pytest` resolving to the target's own environment.
+        env = child_env(self.workspace, extra_path=[str(Path(test_python()).parent)])
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONPATH"] = str(self.workspace) + os.pathsep + env.get("PYTHONPATH", "")
         env["CI"] = "1"  # non-interactive test runners (jest/vitest watch mode off, no prompts)
-        py_dir = str(Path(test_python()).parent)
-        env["PATH"] = py_dir + os.pathsep + env.get("PATH", "")  # `python` / `pytest` resolve to the target env
         shown = cmd[2] if cmd[:2] == ["/bin/sh", "-c"] else " ".join(cmd)
+        if docker_enabled():  # untrusted code: container, no network, no credentials, only the workspace mounted
+            cmd = docker_prefix(self.workspace) + (["sh", "-c", cmd[2]] if cmd[:2] == ["/bin/sh", "-c"] else cmd)
         try:
             proc = subprocess.run(cmd, cwd=self.workspace, text=True, capture_output=True, env=env, timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -610,7 +613,7 @@ def parse_failed_ids(output: str) -> set[str]:
 GIT_STATE = re.compile(
     r"\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree)\s+\S+\s+|-\S+\s+)*"
     r"(?:push|reset|checkout|switch|commit|stash|clean|rebase|merge|branch|tag|restore|am|cherry-pick|revert|"
-    r"worktree|remote|config|init)\b"
+    r"worktree|remote|config)\b"
 )
 
 
@@ -626,11 +629,15 @@ def test_python() -> str:
     return os.environ.get("LCC_TEST_PYTHON") or sys.executable
 
 
-@functools.lru_cache(maxsize=8)
 def _has_pytest(py: str) -> bool:
+    return True if docker_enabled() else _has_pytest_cached(py)  # the sandbox venv always installs pytest
+
+
+@functools.lru_cache(maxsize=8)
+def _has_pytest_cached(py: str) -> bool:
     if py == sys.executable:
         return importlib.util.find_spec("pytest") is not None
-    return subprocess.run([py, "-c", "import pytest"], capture_output=True).returncode == 0
+    return subprocess.run([py, "-c", "import pytest"], capture_output=True, env=child_env()).returncode == 0
 
 
 def _is_python_project(workspace: Path) -> bool:

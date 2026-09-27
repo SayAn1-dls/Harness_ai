@@ -18,3 +18,6 @@ harness/cache/
 benchmarks/results/
 outputs/
 workspaces/
+
+# real-repository benchmark clones and test environment
+benchmarks/.cache/
