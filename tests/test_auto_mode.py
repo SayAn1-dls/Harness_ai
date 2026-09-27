@@ -126,6 +126,10 @@ def test_auto_mode_finds_fixes_and_opens_prs(tmp_path, monkeypatch):
     diff = subprocess.run(["git", "show", "--stat", "--format=", first], cwd=fork, text=True, capture_output=True).stdout
     assert "stats.py" in diff and "calc.py" not in diff  # one fix per PR
     assert json.loads((tmp_path / "out" / f"auto-{Path(out['repo']).name}.json").read_text())["fixed"] == 2
+    report = (tmp_path / "out" / f"ISSUES-{Path(out['repo']).name}.md").read_text()
+    assert report.count("fixed and proven") == 2 and "dropped: no way to trigger it" in report
+    assert "The AI read **2 of 2** source files" in report and "pull/1" in report and "How often the AI was right" in report
+    assert "Other issues found in this repository" in calls  # each PR lists what else was found
 
 
 def test_foreign_repo_needs_explicit_permission(tmp_path, monkeypatch):

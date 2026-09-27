@@ -63,6 +63,7 @@ class Orchestrator:
         run_cfg = load_config().run
         self.ablate = set(run_cfg.ablate)  # e.g. {"planner", "reviewer", "intake"}
         self.mutation_mode, self.mutation_limit = run_cfg.mutation, run_cfg.mutation_limit
+        self.min_speedup = run_cfg.min_speedup
         self.last_proof: dict = {}
         self.weak_test_retries = 0
         self.index = None
@@ -144,7 +145,7 @@ class Orchestrator:
 
                     record = make_proof(task.base_commit, sha, self.last_proof.get("targets") or [],
                                         self.last_proof["kind"], self.last_proof["level"],
-                                        task.verification.get("mutation"))
+                                        task.verification.get("mutation"), task.verification.get("speed"))
                     task.verification["proof"] = record
                     self.store.write_json("proof.json", record)
                 task.stop_reason = StopCondition.VERIFIED_SUCCESS.value
@@ -331,6 +332,7 @@ class Orchestrator:
             passed=ok, commands=[test_res, lint_res], acceptance=task.acceptance_criteria, evidence=evidence,
             score=100 if ok else 0,
         )
+        speed = task.verification.get("speed") if task.kind == "optimize" else None
         task.verification = {
             "passed": ok,
             "tests_run": test_res.get("tests_run"),
@@ -338,6 +340,7 @@ class Orchestrator:
             "lint_ok": lint_ok,
             "proof_level": proof["level"] if proof else 0,
             "mutation": mutation or {},
+            **({"speed": speed} if speed else {}),
         }
         self.store.write_json(f"verification_{task.iteration}.json", self.last_verification)
         self.store.emit(task, "AGENT_COMPLETED", agent="verifier", result="success" if ok else "fail",
@@ -431,10 +434,16 @@ class Orchestrator:
         if task.baseline.get("tests_failed") and not before and (now or {}).get("ok"):
             return {"ok": True, "level": 5, "kind": "baseline_fixed", "targets": tests, "sources": sources,
                     "message": f"[harness] fail-to-pass: {task.baseline['tests_failed']} test(s) failed before the change; the suite now passes."}
-        if task.kind == "optimize" and (now or {}).get("tests_run") and not tests:
-            return {"ok": True, "level": 3, "kind": "behavior_preserved", "targets": [], "sources": sources, "message": (
-                f"[harness] behavior preserved: {now['tests_run']} existing test(s) pass with no regressions "
-                "(optimization; no behavior change to flip a test).")}
+        if task.kind == "optimize" and (now or {}).get("tests_run"):
+            speed = self._speed_proof(task, tools, sources)
+            task.verification["speed"] = speed
+            if not speed.get("ok"):
+                return {"ok": False, "level": 1, "kind": "behavior_preserved", "targets": [], "sources": sources,
+                        "message": f"[harness] optimization not proven: {speed['message']}"}
+            return {"ok": True, "level": 3, "kind": "behavior_preserved", "targets": tests, "sources": sources,
+                    "speed": speed, "message": (
+                        f"[harness] behavior preserved: {now['tests_run']} test(s) pass with no regressions, and "
+                        f"{speed['message']}")}
         if not tests:
             return {"ok": False, "level": 1, "message": (
                 "[harness] The tests that pass now also passed before your change, so they prove nothing about "
@@ -452,6 +461,41 @@ class Orchestrator:
         return {"ok": False, "level": 1, "message": (
             f"[harness] Your new/updated tests {tests} also pass WITHOUT your source change, so they do not "
             "demonstrate the fix. Make the test exercise the reported behavior.")}
+
+    def _speed_proof(self, task: TaskState, tools: ToolRegistry, sources: list[str]) -> dict:
+        """Time the model's benchmark (.lcc/bench.py: bench()) on the original and on the optimized sources:
+        warm-up, then the median of 7 runs, in the same interpreter and sandbox as the tests."""
+        root = Path(task.workspace)
+        if not (root / ".lcc" / "bench.py").is_file():
+            return {"ok": False, "message": "write .lcc/bench.py with a bench() function that exercises the optimized "
+                                            "code on a realistic input, so the speed-up can be measured."}
+        code_changed = [s for s in sources if not s.startswith(".lcc/")]
+        if not code_changed:
+            return {"ok": False, "message": "no source file changed, so nothing can be faster."}
+        script = ("import json, runpy, statistics, time\nns = runpy.run_path('.lcc/bench.py')\nb = ns['bench']\nb()\n"
+                  "ts = []\nfor _ in range(7):\n    t = time.perf_counter(); b(); ts.append(time.perf_counter() - t)\n"
+                  "print('LCC_BENCH ' + json.dumps(statistics.median(ts)))")
+
+        def timed() -> float | None:
+            from lcc.tools import test_python
+
+            res = tools._run([test_python(), "-c", script], timeout=600)
+            m = re.search(r"LCC_BENCH ([0-9.eE+-]+)", res.get("stdout") or "")
+            return float(m.group(1)) if m else None
+
+        with base_sources(root, code_changed):
+            before = timed()
+        after = timed()
+        if before is None or after is None:
+            return {"ok": False, "message": "the benchmark crashed on the original or the new code; bench() must run on both."}
+        if before < 0.001:
+            return {"ok": False, "message": f"the benchmark takes {before * 1000:.2f} ms: too small to measure; use a bigger input."}
+        speedup = before / after if after > 0 else float("inf")
+        ok = speedup >= self.min_speedup
+        text = (f"{before * 1000:.1f} ms → {after * 1000:.1f} ms ({speedup:.1f}× faster, median of 7)" if ok else
+                f"no measurable speed-up: {before * 1000:.1f} ms → {after * 1000:.1f} ms ({speedup:.2f}×, need {self.min_speedup}×)")
+        return {"ok": ok, "before_s": round(before, 6), "after_s": round(after, 6), "speedup": round(speedup, 2),
+                "message": text}
 
     def _test_strength(self, task: TaskState, proof: dict) -> dict | None:
         """Break the fix's added lines on purpose; the fix's tests should notice. No model call."""

@@ -523,15 +523,15 @@ def _check_syntax(path: str, content: str) -> None:
 
 def workspace_diff(root: Path) -> str:
     """Diff of tracked + new files against HEAD, excluding harness state."""
-    subprocess.run(["git", "add", "-A", "-N", "--", ".", ":!harness"], cwd=root, capture_output=True)
-    proc = subprocess.run(["git", "diff", "--", ".", ":!harness"], cwd=root, text=True, capture_output=True)
+    subprocess.run(["git", "add", "-A", "-N", "--", ".", ":!harness", ":!.lcc"], cwd=root, capture_output=True)
+    proc = subprocess.run(["git", "diff", "--", ".", ":!harness", ":!.lcc"], cwd=root, text=True, capture_output=True)
     return proc.stdout
 
 
 def changed_files(root: Path) -> list[str]:
     """Tracked and new files that differ from HEAD, excluding harness state."""
-    subprocess.run(["git", "add", "-A", "-N", "--", ".", ":!harness"], cwd=root, capture_output=True)
-    proc = subprocess.run(["git", "diff", "--name-only", "--", ".", ":!harness"], cwd=root, text=True, capture_output=True)
+    subprocess.run(["git", "add", "-A", "-N", "--", ".", ":!harness", ":!.lcc"], cwd=root, capture_output=True)
+    proc = subprocess.run(["git", "diff", "--name-only", "--", ".", ":!harness", ":!.lcc"], cwd=root, text=True, capture_output=True)
     return [line for line in proc.stdout.splitlines() if line.strip()]
 
 

@@ -91,18 +91,31 @@ def new_stats() -> dict[str, int]:
 
 def discover(repo: Path, provider: BaseProvider | None, *, max_candidates: int = 3, audit_calls: int = 2,
              audit_chars: int = 18_000, budget: Budget | None = None, log=print,
-             stats: dict[str, int] | None = None) -> list[Candidate]:
+             stats: dict[str, int] | None = None, audit_budget: int | None = None,
+             ledger: list[dict] | None = None, coverage: dict | None = None) -> list[Candidate]:
+    """Find what is worth fixing. `ledger` receives every issue found (fixable or not) for the full report;
+    `audit_budget` (characters of source shown to the model) enables the whole-repository audit."""
     budget = budget or Budget()
     stats = stats if stats is not None else new_stats()
+    ledger = ledger if ledger is not None else []
     found: list[Candidate] = []
     log("scanning: running the test suite")
-    found += from_failing_tests(repo, budget)
-    log(f"scanning: static analysis ({len(found)} candidate(s) so far)")
-    found += from_static_analysis(repo)
-    if provider is not None and audit_calls > 0:
-        log("scanning: model audit of the central source files")
-        found += from_model_audit(repo, provider, calls=audit_calls, chars=audit_chars, stats=stats)
+    tests = from_failing_tests(repo, budget)
+    log(f"scanning: static analysis ({len(tests)} failing-test candidate(s) so far)")
+    static = from_static_analysis(repo)
+    for c in tests + static:
+        ledger.append({"source": c.source, "kind": c.kind, "title": c.title, "file": c.files[0] if c.files else "",
+                       "line": c.line, "detail": c.body.splitlines()[0][:300], "status": "candidate", "candidate": c.title})
+    found += tests + static
+    if provider is not None and (audit_calls > 0 or audit_budget):
+        log("scanning: model audit of the whole repository" if audit_budget else "scanning: model audit of the central files")
+        found += from_model_audit(repo, provider, calls=max(1, audit_calls), chars=audit_chars, stats=stats,
+                                  budget=audit_budget, ledger=ledger, coverage=coverage)
     ranked = rank(found, max_candidates)
+    chosen = {c.title for c in ranked}
+    for entry in ledger:
+        if entry.get("candidate") and entry["status"] == "candidate":
+            entry["status"] = "queued for a fix" if entry["candidate"] in chosen else "found, not attempted (max_fixes)"
     stats["not_attempted"] = sum(1 for c in found if c.source == "audit" and c not in ranked)
     return ranked
 
@@ -173,41 +186,74 @@ def from_static_analysis(repo: Path) -> list[Candidate]:
 
 
 # ------------------------------------------------------------------ 3. model audit
-def audit_files(repo: Path, chars: int, calls: int) -> list[list[tuple[str, str]]]:
-    """The most central source files (import-graph PageRank), packed into `calls` chunks of <= `chars`."""
+def audit_plan(repo: Path, chunk_chars: int = 18_000, budget_chars: int = 120_000) -> tuple[list[list[tuple[str, str]]], dict]:
+    """Every source file, most central first (import-graph PageRank), packed into chunks of <= `chunk_chars`
+    until `budget_chars` is spent. Large files are split into line windows instead of being skipped. Returns the
+    chunks and a coverage record, so the report can say exactly how much of the repository was read."""
     index = scan_repo(repo)
     ranks = pagerank(index.graph, index.files)
     sources = [f for f in index.files if Path(f).suffix in SOURCE_SUFFIXES and not _is_test(f)
-               and not any(p in SKIP_PARTS for p in Path(f).parts) and not Path(f).name.startswith("__init__")]
+               and not any(p in SKIP_PARTS for p in Path(f).parts)]
     sources.sort(key=lambda f: ranks.get(f, 0), reverse=True)
     chunks: list[list[tuple[str, str]]] = []
     current: list[tuple[str, str]] = []
-    used = 0
+    used = spent = lines_read = total_lines = 0
+    read: list[str] = []
     for rel in sources:
         try:
-            text = (repo / rel).read_text(encoding="utf-8")
+            lines = (repo / rel).read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
-        if not text.strip() or len(text) > chars:
+        total_lines += len(lines)
+        if not any(line.strip() for line in lines):
             continue
-        numbered = "\n".join(f"{i:>4}| {line}" for i, line in enumerate(text.splitlines(), 1))
-        if used + len(numbered) > chars and current:
-            chunks.append(current)
-            if len(chunks) >= calls:
-                return chunks
-            current, used = [], 0
-        current.append((rel, numbered))
-        used += len(numbered)
-    if current and len(chunks) < calls:
+        numbered = [f"{i:>4}| {line}" for i, line in enumerate(lines, 1)]
+        part: list[str] = []
+        pieces: list[str] = []
+        for line in numbered:  # windows of at most chunk_chars
+            if part and sum(len(x) + 1 for x in part) + len(line) > chunk_chars:
+                pieces.append("\n".join(part))
+                part = []
+            part.append(line)
+        if part:
+            pieces.append("\n".join(part))
+        for piece in pieces:
+            if spent + len(piece) > budget_chars:
+                break
+            if used + len(piece) > chunk_chars and current:
+                chunks.append(current)
+                current, used = [], 0
+            current.append((rel, piece))
+            used += len(piece)
+            spent += len(piece)
+            lines_read += piece.count("\n") + 1
+            if rel not in read:
+                read.append(rel)
+        if spent >= budget_chars:
+            break
+    if current:
         chunks.append(current)
-    return chunks
+    coverage = {"source_files": len(sources), "files_read": len(read), "lines_read": lines_read,
+                "source_lines": total_lines, "chars_read": spent,
+                "unread": [f for f in sources if f not in read][:50]}
+    return chunks, coverage
+
+
+def audit_files(repo: Path, chars: int, calls: int) -> list[list[tuple[str, str]]]:
+    """Compatibility: the top of the repository in at most `calls` chunks."""
+    return audit_plan(repo, chars, chars * calls)[0][:calls]
 
 
 def from_model_audit(repo: Path, provider: BaseProvider, *, calls: int = 2, chars: int = 18_000,
-                     stats: dict[str, int] | None = None) -> list[Candidate]:
+                     stats: dict[str, int] | None = None, budget: int | None = None,
+                     ledger: list[dict] | None = None, coverage: dict | None = None) -> list[Candidate]:
     stats = stats if stats is not None else new_stats()
+    ledger = ledger if ledger is not None else []
+    chunks, cov = audit_plan(repo, chars, budget if budget is not None else chars * calls)
+    if coverage is not None:
+        coverage.update(cov)
     out = []
-    for chunk in audit_files(repo, chars, calls):
+    for chunk in chunks:
         prompt = "\n\n".join(f"### {rel}\n{body}" for rel, body in chunk)
         data = provider.structured_output(prompt, system=AUDIT_SYSTEM, schema_hint=AUDIT_SCHEMA, agent="auditor")
         known = {rel for rel, _ in chunk}
@@ -218,28 +264,39 @@ def from_model_audit(repo: Path, provider: BaseProvider, *, calls: int = 2, char
             conf = _float(f.get("confidence"))
             kind = str(f.get("kind") or "bug").lower()
             kind = kind if kind in {"bug", "security", "performance"} else "bug"
+            line = int(_float(f.get("line")))
+            title = re.sub(r"\s+", " ", str(f.get("title") or "defect")).strip()[:100]
+            entry = {"source": "audit", "kind": kind, "title": title, "file": rel, "line": line,
+                     "detail": str(f.get("why") or "")[:400], "trigger": str(f.get("trigger") or "")[:300],
+                     "confidence": conf, "status": "candidate"}
             stats["claimed"] += 1
             if rel not in known:
                 stats["dropped_unread_file"] += 1  # a "bug" in a file the model was never shown
+                ledger.append(entry | {"status": "dropped: file not read by the model"})
                 continue
-            if not str(f.get("trigger") or "").strip():
+            if not entry["trigger"].strip():
                 stats["dropped_no_trigger"] += 1  # it could not say how to trigger it
+                ledger.append(entry | {"status": "dropped: no way to trigger it"})
                 continue
             if conf < (0.7 if kind == "performance" else 0.6):
                 stats["dropped_low_confidence"] += 1
+                ledger.append(entry | {"status": f"dropped: low confidence ({conf:.2f})"})
                 continue
             stats["kept"] += 1
-            line = int(_float(f.get("line")))
-            title = re.sub(r"\s+", " ", str(f.get("title") or "defect")).strip()[:100]
             body = (f"{f.get('why') or ''}\n\nLocation: `{rel}` line {line}\n"
                     f"How to trigger: {f.get('trigger')}\nExpected: {f.get('expected') or '?'}\nActual: {f.get('actual') or '?'}")
             if kind == "performance":
-                body += ("\n\nThis is an optimization: keep every result identical and make the existing tests keep "
-                         "passing. If the defect is not real, change nothing and call finish.")
+                body += ("\n\nThis is an optimization. Keep every result identical and keep the existing tests passing. "
+                         "Write a micro-benchmark at `.lcc/bench.py` defining `bench()` that exercises this code on a "
+                         "realistic input (0.01-1 s per call); the harness times it on the old and the new code and "
+                         "accepts the change only if it is measurably faster. If there is no real speed-up, change "
+                         "nothing and call finish.")
             else:
                 body += "\n\nFirst write a test that reproduces this. If it does not fail, the finding is wrong: change nothing."
-            out.append(Candidate(source="audit", kind=kind, title=f"{title} ({rel})", body=body, files=[rel],
-                                 line=line, score=0.5 + 0.4 * conf - (0.1 if kind == "performance" else 0)))
+            cand = Candidate(source="audit", kind=kind, title=f"{title} ({rel})", body=body, files=[rel],
+                             line=line, score=0.5 + 0.4 * conf - (0.1 if kind == "performance" else 0))
+            ledger.append(entry | {"candidate": cand.title})
+            out.append(cand)
     return out
 
 

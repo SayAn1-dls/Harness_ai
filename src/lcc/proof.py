@@ -34,12 +34,12 @@ def _git(repo: Path, *args: str, check: bool = True) -> str:
 
 # ------------------------------------------------------------------ 1. proof-carrying fixes
 def make_proof(base: str, head: str, targets: list[str], kind: str, level: int,
-               mutation: dict | None = None) -> dict[str, Any]:
+               mutation: dict | None = None, speed: dict | None = None) -> dict[str, Any]:
     """kind: new_tests (new/changed tests fail on base), baseline_fixed (tests already failing now pass),
     behavior_preserved (optimization: existing tests keep passing)."""
     files = sorted({t.split("::")[0] for t in targets})
     return {"version": 1, "base": base, "head": head, "kind": kind, "level": level,
-            "targets": targets, "test_files": files, "mutation": mutation or {}}
+            "targets": targets, "test_files": files, "mutation": mutation or {}, "speed": speed or {}}
 
 
 def manual_steps(proof: dict[str, Any], head_ref: str = "") -> str:
@@ -47,7 +47,9 @@ def manual_steps(proof: dict[str, Any], head_ref: str = "") -> str:
     head = head_ref or proof["head"][:12]
     files = " ".join(proof["test_files"])
     if proof["kind"] == "behavior_preserved":
-        return f"git checkout {head}\npython -m pytest {files or ''}   # all pass: behavior is unchanged"
+        sp = proof.get("speed") or {}
+        timing = f"\n# measured by the harness: {sp['message']}" if sp.get("message") else ""
+        return f"git checkout {head}\npython -m pytest   # all pass: behavior is unchanged{timing}"
     return (f"git checkout {proof['base'][:12]}\n"
             f"git checkout {head} -- {files}        # the fix's tests, on the ORIGINAL code\n"
             f"python -m pytest {' '.join(proof['targets'])}   # expected: FAIL (the bug is real)\n"

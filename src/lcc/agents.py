@@ -408,7 +408,9 @@ def coder_task_prompt(task: TaskState, plan: ImplementationPlan, diff: str) -> s
             line += " The full suite is slow: run focused test files with run_test(target=...)."
         if task.kind == "optimize":
             line += (" This is a behavior-preserving optimization: results must not change and every existing test"
-                     " must keep passing. Add a test only if nothing covers the code you change.")
+                     " must keep passing. Write .lcc/bench.py with bench() calling the slow code on a realistic input"
+                     " (0.01-1 s per call) BEFORE you optimize; the verifier times it on the old and new code and needs"
+                     " a real speed-up. Add a test only if nothing covers the code you change.")
         elif not b.get("tests_failed"):
             line += (" The existing suite does not catch this issue, so you MUST add or update a test that fails"
                      " without your fix and passes with it; the verifier checks this.")

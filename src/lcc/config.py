@@ -47,14 +47,20 @@ class RunConfig:
     # none of 3+ deliberate breaks of the fix sends the coder back once to strengthen it). Env LCC_MUTATION.
     mutation: str = "report"
     mutation_limit: int = 6
+    # An optimization is accepted only if its benchmark (.lcc/bench.py) is at least this much faster.
+    min_speedup: float = 1.1
 
 
 @dataclass
 class AutoConfig:
     """Repo-only mode: find problems without an issue, fix them, open pull requests."""
     max_fixes: int = 3
-    audit_calls: int = 2  # model calls spent auditing source files
+    audit_calls: int = 2  # model calls when audit_scope = "top"
     audit_chars: int = 18_000  # source characters per audit call (~4.5k tokens)
+    # "full": the model reads the whole repository, most central files first, up to audit_budget_chars
+    # (120k chars ~ 30k tokens ~ 7 calls); the report states exactly how much was read. "top": audit_calls chunks.
+    audit_scope: str = "full"
+    audit_budget_chars: int = 120_000
     open_pr: bool = True
     pr_draft: bool = True  # maintainers see a draft first; mark it ready yourself
     max_open_prs: int = 3  # never have more than this many open harness PRs on one repository

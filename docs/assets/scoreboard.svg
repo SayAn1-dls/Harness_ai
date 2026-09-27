@@ -37,5 +37,5 @@
     <text x="560" y="301" text-anchor="middle" class="sub" fill="#A87A2E">waiting for a funded API key · make eval-real</text>
     <text x="800" y="303" class="serif num q" fill="#A87A2E">?/20</text>
   </g>
-  <text x="36" y="340" class="sans sub" font-size="11">+ 97 automated tests · green on Python 3.11 / 3.12 / 3.13 · also run in a clean Linux container</text>
+  <text x="36" y="340" class="sans sub" font-size="11">+ 100 automated tests · green on Python 3.11 / 3.12 / 3.13 · also run in a clean Linux container</text>
 </svg>

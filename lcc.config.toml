@@ -65,6 +65,10 @@ sandbox = "auto"
 # each (a test must fail before and pass after; optimizations must keep every existing test green), and opens
 # one pull request per verified fix. It never merges. LCC_OPEN_PR=0 or PR=0 keeps fixes as local branches.
 max_fixes = 3
+# "full": the model reads the whole repository (most central files first) up to audit_budget_chars characters
+# (~4 characters per token). The issue report states how much of the repository was read. "top": audit_calls chunks.
+audit_scope = "full"
+audit_budget_chars = 120000
 audit_calls = 2
 audit_chars = 18000
 # On a repository you cannot push to, PRs need a confirmation (interactive) or PR=1 (non-interactive).

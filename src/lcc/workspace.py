@@ -20,7 +20,7 @@ class Workspace:
                 subprocess.run(["git", "init"], cwd=self.path, check=True, capture_output=True)
         # A repository without commits has no base to branch from or diff against: snapshot it.
         if subprocess.run(["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=self.path, capture_output=True).returncode != 0:
-            subprocess.run(["git", "add", "-A", "--", ".", ":!harness"], cwd=self.path, capture_output=True)
+            subprocess.run(["git", "add", "-A", "--", ".", ":!harness", ":!.lcc"], cwd=self.path, capture_output=True)
             self._commit("lcc: workspace snapshot")
         return self.head()
 
@@ -71,7 +71,7 @@ class Workspace:
         """Commit task changes on the task branch. Harness state is never committed."""
         if self.current_branch() in {"main", "master", "trunk"}:
             raise ToolError("refusing to commit on a protected branch")
-        subprocess.run(["git", "add", "-A", "--", ".", ":!harness"], cwd=self.path, capture_output=True)
+        subprocess.run(["git", "add", "-A", "--", ".", ":!harness", ":!.lcc"], cwd=self.path, capture_output=True)
         self._commit(message)
         return self.head()
 

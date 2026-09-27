@@ -32,7 +32,7 @@ GH_REPO = re.compile(r"^(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?
 REPO_LINE = re.compile(r"^\s*(?:repo|repository)\s*:\s*(\S+)\s*$", re.I | re.M)
 BASE_LINE = re.compile(r"^\s*(?:base[ _-]?commit|base[ _-]?sha|base|commit)\s*:\s*([0-9a-fA-F]{7,40})\s*$", re.I | re.M)
 REF_SUFFIX = re.compile(r"^(?P<repo>.+?)@(?P<ref>[\w.-]+)$")
-GIT_EXCLUDES = ("/harness/", "*.egg-info/", "__pycache__/", ".pytest_cache/", "*.pyc", "node_modules/")
+GIT_EXCLUDES = ("/harness/", "/.lcc/", "*.egg-info/", "__pycache__/", ".pytest_cache/", "*.pyc", "node_modules/")
 COPY_IGNORE = shutil.ignore_patterns(".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", "harness", ".mypy_cache")
 SUCCESS = {TaskStatus.HUMAN_REVIEW, TaskStatus.VERIFIED, TaskStatus.PR_READY}
 END_MARKERS = {"END", "EOF", "."}
@@ -373,9 +373,9 @@ def _prepare_repo(repo: Path, console: Console) -> tuple[str, bool]:
                                encoding="utf-8")
     origin = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     stashed = False
-    if _git(repo, "status", "--porcelain", "--", ".", ":!harness").stdout.strip():
+    if _git(repo, "status", "--porcelain", "--", ".", ":!harness", ":!.lcc").stdout.strip():
         proc = _git(repo, "-c", "user.name=lcc", "-c", "user.email=lcc@local",
-                    "stash", "push", "-u", "-q", "-m", "lcc: uncommitted changes before run", "--", ".", ":!harness")
+                    "stash", "push", "-u", "-q", "-m", "lcc: uncommitted changes before run", "--", ".", ":!harness", ":!.lcc")
         if proc.returncode != 0:
             raise RuntimeError(f"could not stash uncommitted changes: {proc.stderr.strip()[-300:]}")
         stashed = True
@@ -396,8 +396,8 @@ def _restore_repo(repo: Path, task: TaskState, origin: str, stashed: bool, conso
     """Park any unverified work as a commit on the task branch, return to the original branch, restore stashed changes."""
     if origin and origin != "HEAD" and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != origin:
         if task.branch.startswith("agent/") and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == task.branch \
-                and _git(repo, "status", "--porcelain", "--", ".", ":!harness").stdout.strip():
-            _git(repo, "add", "-A", "--", ".", ":!harness")
+                and _git(repo, "status", "--porcelain", "--", ".", ":!harness", ":!.lcc").stdout.strip():
+            _git(repo, "add", "-A", "--", ".", ":!harness", ":!.lcc")
             _git(repo, "-c", "user.name=lcc", "-c", "user.email=lcc@local", "commit", "-q", "-m", f"lcc: unverified attempt for {task.task_id}")
         _git(repo, "checkout", "-q", origin)
     if stashed:
@@ -409,10 +409,10 @@ def _restore_repo(repo: Path, task: TaskState, origin: str, stashed: bool, conso
 
 def report(task: TaskState, store: HarnessStore, cfg: Config, console: Console, elapsed: float) -> dict:
     repo = Path(task.workspace)
-    diff = subprocess.run(["git", "diff", f"{task.base_commit}..HEAD", "--", ".", ":!harness"],
+    diff = subprocess.run(["git", "diff", f"{task.base_commit}..HEAD", "--", ".", ":!harness", ":!.lcc"],
                           cwd=repo, text=True, capture_output=True).stdout
     if not diff:  # unverified work stays uncommitted; still surface it
-        diff = subprocess.run(["git", "diff", "HEAD", "--", ".", ":!harness"], cwd=repo, text=True, capture_output=True).stdout
+        diff = subprocess.run(["git", "diff", "HEAD", "--", ".", ":!harness", ":!.lcc"], cwd=repo, text=True, capture_output=True).stdout
     out_dir = cfg.resolve(cfg.run.outputs_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     patch = out_dir / f"{task.task_id}.patch"
@@ -489,7 +489,7 @@ def is_repo_only(raw: str) -> bool:
                                                                        and not Path(spec).suffix)
 
 
-def pr_body(cand, summary: dict, head_ref: str = "") -> str:
+def pr_body(cand, summary: dict, head_ref: str = "", others: list[dict] | None = None) -> str:
     from lcc.proof import manual_steps
 
     v = summary.get("verification") or {}
@@ -506,9 +506,15 @@ def pr_body(cand, summary: dict, head_ref: str = "") -> str:
            if v.get("proof_level") == 5 else "behavior-preserving change; the existing tests pass with no regressions."),
         f"- Iterations: {summary.get('iterations')}, model calls: {summary.get('model_calls')}, tokens: {summary.get('tokens')}",
     ]
+    speed = v.get("speed") or {}
+    if speed.get("ok"):
+        lines.append(f"- Speed: **{speed['message']}**, measured by the harness on the old and the new code")
     if mut.get("total"):
         lines.append(f"- Test strength: the new test catches **{mut['killed']}/{mut['total']}** deliberate breaks of this fix"
                      + (f" (survived: {', '.join(s['op'] for s in mut['survived'][:3])})" if mut.get("survived") else ""))
+    if others:
+        lines += ["", f"## Other issues found in this repository ({len(others)})", ""]
+        lines += [f"- {e['status']}: {e.get('title', '')} (`{e.get('file') or '-'}`)" for e in others[:8]]
     if proof:
         lines += ["", "## Verify it yourself (no need to trust the AI)", "",
                   "```bash", manual_steps(proof, head_ref), "```"]
@@ -571,8 +577,16 @@ def _auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, 
 
     counter = CountingProvider(provider)
     honesty = new_stats()
+    ledger: list[dict] = []
+    coverage: dict = {}
+    full = cfg.auto.audit_scope == "full"
     found = discover(repo, counter, max_candidates=cfg.auto.max_fixes, audit_calls=cfg.auto.audit_calls,
-                     audit_chars=cfg.auto.audit_chars, log=lambda m: console.print(f"[cyan]{m}[/]"), stats=honesty)
+                     audit_chars=cfg.auto.audit_chars, log=lambda m: console.print(f"[cyan]{m}[/]"), stats=honesty,
+                     audit_budget=cfg.auto.audit_budget_chars if full and cfg.auto.audit_calls > 0 else None,
+                     ledger=ledger, coverage=coverage)
+    if coverage:
+        console.print(f"[cyan]read {coverage['files_read']}/{coverage['source_files']} source files "
+                      f"({coverage['lines_read']}/{coverage['source_lines']} lines)[/]")
     table = Table(title="Candidates", show_lines=False)
     for col in ("#", "source", "kind", "title"):
         table.add_column(col)
@@ -593,14 +607,21 @@ def _auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, 
                "tokens": summary["tokens"], "pr": ""}
         if summary["resolved"] and open_prs:
             try:
+                others = [e for e in ledger if e.get("candidate") != cand.title and not e["status"].startswith("dropped")]
                 row["pr"] = open_pull_request(repo, summary["branch"], _pr_title(cand),
-                                              pr_body(cand, summary, f"lcc/{issue.task_id.lower()}"),
+                                              pr_body(cand, summary, f"lcc/{issue.task_id.lower()}", others),
                                               draft=cfg.auto.pr_draft, remote_branch=f"lcc/{issue.task_id.lower()}")
                 console.print(f"[bold green]pull request:[/] {row['pr']}")
             except Exception as exc:  # noqa: BLE001 - keep going; the verified branch is still there
                 row["pr_error"] = str(exc)
                 console.print(f"[yellow]could not open the pull request:[/] {exc}")
         results.append(row)
+        for entry in ledger:
+            if entry.get("candidate") == cand.title:
+                speed = (summary.get("verification") or {}).get("speed") or {}
+                entry["status"] = ("fixed and proven" + (f" ({speed['message']})" if speed.get("ok") else "")
+                                   if summary["resolved"] else f"attempted, not proven ({summary['status']})")
+                entry["branch"] = summary["branch"]
         if cand.source == "audit" and not summary.get("fatal"):
             honesty["attempted"] += 1
             honesty["proven" if summary["resolved"] else "unproven"] += 1
@@ -611,8 +632,17 @@ def _auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, 
     honesty["rate"] = round(honesty["proven"] / honesty["attempted"], 2) if honesty["attempted"] else None
     if honesty["claimed"]:
         console.print(Panel(honesty_text(honesty), title="AI honesty report", border_style="yellow"))
+    for r in results:  # PR links into the ledger
+        for entry in ledger:
+            if entry.get("candidate") == r["candidate"] and r.get("pr"):
+                entry["pr"] = r["pr"]
+    report_md = issue_report(repo, ledger, coverage, honesty)
+    out_dir0 = cfg.resolve(cfg.run.outputs_dir)
+    out_dir0.mkdir(parents=True, exist_ok=True)
+    (out_dir0 / f"ISSUES-{repo.name}.md").write_text(report_md, encoding="utf-8")
+    console.print(f"[bold]issue report:[/] {out_dir0 / f'ISSUES-{repo.name}.md'} ({len(ledger)} issue(s))")
     out = {"repo": str(repo), "candidates": len(found), "fixed": sum(r["resolved"] for r in results),
-           "ai_honesty": honesty,
+           "ai_honesty": honesty, "issues": ledger, "coverage": coverage,
            "discovery_tokens": counter.tokens, "total_tokens": counter.tokens + sum(r["tokens"] for r in results),
            "prs": [r["pr"] for r in results if r["pr"]], "results": results}
     out_dir = cfg.resolve(cfg.run.outputs_dir)
@@ -638,6 +668,41 @@ class CountingProvider(BaseProvider):
         res = self.inner.chat(messages, tools=tools, max_tokens=max_tokens, agent=agent, **kw)
         self.tokens += res.usage.total
         return res
+
+
+def issue_report(repo: Path, ledger: list[dict], coverage: dict, honesty: dict) -> str:
+    """Every issue found, fixable or not, with where it came from and what happened to it."""
+    icon = {"fixed": "✅", "attempted": "⚠️", "queued": "⏳", "found": "📝", "dropped": "🗑️"}
+    lines = [f"# Issues found in `{repo.name}`", ""]
+    if coverage:
+        lines.append(f"The AI read **{coverage['files_read']} of {coverage['source_files']}** source files "
+                     f"({coverage['lines_read']:,} of {coverage['source_lines']:,} lines). The test suite and the "
+                     "static defect checker covered the whole repository.")
+        if coverage.get("unread"):
+            lines.append(f"Not read by the AI (budget): {', '.join(coverage['unread'][:15])}"
+                         + (" …" if len(coverage["unread"]) > 15 else ""))
+        lines.append("")
+    order = {"fixed": 0, "attempted": 1, "queued": 2, "found": 3, "dropped": 4}
+
+    def key(e: dict) -> str:
+        m = re.match(r"[a-z]+", e["status"])
+        return m.group(0) if m else "other"
+
+    counts: dict[str, int] = {}
+    for e in ledger:
+        counts[key(e)] = counts.get(key(e), 0) + 1
+    lines += [" · ".join(f"{icon.get(k, '•')} {v} {k}" for k, v in sorted(counts.items(), key=lambda kv: order.get(kv[0], 9))), "",
+              "| # | Status | Kind | Where | Issue | Found by |", "|---|---|---|---|---|---|"]
+    for i, e in enumerate(sorted(ledger, key=lambda e: order.get(key(e), 9)), 1):
+        where = f"`{e.get('file') or '-'}`" + (f":{e['line']}" if e.get("line") else "")
+        status = e["status"] + (f" · [PR]({e['pr']})" if e.get("pr") else "")
+        title = str(e.get("title", "")).replace("|", "\\|")[:90]
+        lines.append(f"| {i} | {status} | {e.get('kind', '')} | {where} | {title} | {e.get('source', '')} |")
+    if honesty.get("claimed"):
+        lines += ["", "## How often the AI was right", "", "```", honesty_text(honesty), "```"]
+    lines += ["", "Only issues proven with a test (or, for optimizations, a measured speed-up with every test still "
+              "passing) are fixed. Everything else is listed so a human can decide."]
+    return "\n".join(lines) + "\n"
 
 
 def honesty_text(h: dict) -> str:

@@ -49,7 +49,7 @@ We didn't want to grade ourselves on toy examples we wrote, so we went digging t
 - To test the grader, we plugged in a model that does nothing: it scored **0/20**. You can't pass by sitting still.
 - **The live score is missing.** Our DeepSeek account ran out of credit (HTTP 402) and our Gemini project was blocked (HTTP 403) before we got a real run in. With a funded DeepSeek or Qwen key it's one command: `make eval-real`. Until then, we are not going to invent a number.
 
-Behind all of that: **97 automated tests**, run on every push on Python 3.11, 3.12 and 3.13 (green ✅), plus the same checks inside a clean Linux container.
+Behind all of that: **100 automated tests**, run on every push on Python 3.11, 3.12 and 3.13 (green ✅), plus the same checks inside a clean Linux container.
 
 ---
 
@@ -125,12 +125,12 @@ The numbers above are an example of the format. The live numbers come from your 
 make auto REPO=https://github.com/someone/their-project
 ```
 
-No bug report at all. It goes looking for trouble:
-- tests that are already failing;
-- real defects a static analyser flags (undefined names, shared default lists, injection risks; never "your line is too long");
-- a quick AI review of the most important files. The review must say **exactly what input triggers the bug**.
+No bug report at all. One command, and it does the whole job:
 
-Then every candidate goes through the same proof as above. **If the bug can't be shown with a failing test, it's dropped.** So the AI can't make up bugs and send them to strangers.
+1. **Reads the whole repo.** It runs the full test suite and a defect checker over every file. Then the AI reads *every* source file, most important first, within a budget you set (about 30k tokens by default; big files are split, never skipped). The report tells you exactly how much was read: *"The AI read 12 of 14 source files (2,300 of 2,710 lines)."*
+2. **Tells you everything it found.** You get `outputs/ISSUES-<repo>.md` with every bug, security hole and slow spot: where it is, who found it (tests, the checker, or the AI), and what happened to it. Each one is fixed with proof and a PR link, attempted but not provable, found but not attempted, or dropped with the reason.
+3. **Fixes the bugs,** but only with a test that fails before the fix and passes after it. **If a bug can't be proven, it's dropped**, so the AI can't make up bugs and send them to strangers.
+4. **Optimizes slow code, and proves it's faster.** For a slow spot, the model writes a small benchmark. LCC times it on the old code and the new code (median of 7 runs) and accepts the change only if **every test still passes** and it's **at least 1.1× faster**. The PR says it straight: *"12.4 ms → 3.1 ms (4.0× faster)"*. We tested it on an O(n²) duplicate check, which came out more than 5× faster, and on a fake "optimization" that changed nothing, which was rejected.
 
 What survives becomes a **draft** pull request on your fork. It asks before touching a repo you don't own, stops after 3 open PRs, and runs the stranger's code inside Docker when Docker is running. Maintainers decide what gets merged. Always.
 
@@ -183,7 +183,7 @@ We tested all of it: inside the container the key is gone, your home folder is i
 | `make ablation` | The same, with planner, reviewer and intake switched off one at a time |
 | `make bench-check` | Re-prove the benchmark: 20/20 valid, 20/20 with the real fix, 0/20 doing nothing |
 | `make verify PROOF=outputs/<task>.proof.json` | Replay a fix's proof: its test fails on the original code, passes with the fix |
-| `make test` | 97 tests + a small offline benchmark, no key needed |
+| `make test` | 100 tests + a small offline benchmark, no key needed |
 | `make doctor` · `make clean` | Health check · tidy up |
 </details>
 
