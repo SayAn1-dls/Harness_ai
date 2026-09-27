@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import base64
+import os
 import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
+
+import httpx
 
 from lcc.schemas import GitHubPermission, TaskState
 
@@ -44,13 +49,114 @@ def github_slug(repo: Path) -> str:
     return f"{m.group(1)}/{m.group(2)}"
 
 
+# ------------------------------------------------------------------ who are we on GitHub?
+API = "https://api.github.com"
+
+
+def github_token() -> str:
+    return (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or "").strip()
+
+
+def gh_login() -> str | None:
+    """The account the GitHub CLI is signed in as, or None (not installed / not logged in)."""
+    if not shutil.which("gh"):
+        return None
+    proc = subprocess.run(["gh", "api", "user", "--jq", ".login"], text=True, capture_output=True, timeout=60)
+    login = proc.stdout.strip()
+    return login if proc.returncode == 0 and login else None
+
+
+def _api(method: str, path: str, token: str, payload: dict | None = None) -> tuple[int, Any]:
+    """GitHub REST call with a token (used when the gh CLI is not available)."""
+    r = httpx.request(method, f"{API}{path}", json=payload, timeout=30, headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": "lcc-harness"})
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, r.text
+
+
+def token_login(token: str) -> str | None:
+    status, data = _api("GET", "/user", token)
+    return data.get("login") if status == 200 and isinstance(data, dict) else None
+
+
+def github_identity() -> tuple[str | None, str]:
+    """(login, how): "gh" when the GitHub CLI is signed in, "token" for GH_TOKEN/GITHUB_TOKEN, else (None, "")."""
+    login = gh_login()
+    if login:
+        return login, "gh"
+    tok = github_token()
+    if tok:
+        login = token_login(tok)
+        if login:
+            return login, "token"
+    return None, ""
+
+
 def repo_access(repo: Path) -> tuple[str, bool, int]:
     """(owner/name, may the signed-in account push, how many open PRs that account already has there)."""
     slug = github_slug(repo)
+    login, how = github_identity()
+    if how == "token":
+        tok = github_token()
+        _, info = _api("GET", f"/repos/{slug}", tok)
+        can_push = bool((info.get("permissions") or {}).get("push")) if isinstance(info, dict) else False
+        _, prs = _api("GET", f"/repos/{slug}/pulls?state=open&per_page=100", tok)
+        mine = sum(1 for p in prs if (p.get("user") or {}).get("login") == login) if isinstance(prs, list) else 0
+        return slug, can_push, mine
+    if not login:
+        raise RuntimeError("no GitHub login: run `gh auth login`, or set GITHUB_TOKEN")
     can_push = _run(["gh", "api", f"repos/{slug}", "--jq", ".permissions.push"], repo, check=False).split()[:1] == ["true"]
     mine = _run(["gh", "pr", "list", "--repo", slug, "--author", "@me", "--state", "open", "--json", "number",
                  "--jq", "length"], repo, check=False)
     return slug, can_push, int(mine) if mine.isdigit() else 0
+
+
+def _open_pr_with_token(repo: Path, branch: str, title: str, body: str, *, draft: bool, remote_branch: str,
+                        base_branch: str | None) -> str:
+    """Same as the gh path, through the REST API. The token reaches git through the environment (never argv)."""
+    tok = github_token()
+    login = token_login(tok)
+    if not login:
+        raise RuntimeError("GITHUB_TOKEN was rejected by GitHub")
+    slug = github_slug(repo)
+    status, info = _api("GET", f"/repos/{slug}", tok)
+    if status != 200:
+        raise RuntimeError(f"cannot read {slug} on GitHub ({status})")
+    base = info.get("default_branch") or "main"
+    if base_branch and base_branch != "HEAD" and _api("GET", f"/repos/{slug}/branches/{base_branch}", tok)[0] == 200:
+        base = base_branch
+    if (info.get("permissions") or {}).get("push"):
+        owner, name = slug.split("/", 1)
+    else:
+        name = slug.split("/", 1)[1]
+        _api("POST", f"/repos/{slug}/forks", tok, {})
+        for _ in range(15):
+            if _api("GET", f"/repos/{login}/{name}", tok)[0] == 200:
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError(f"could not create or find the fork {login}/{name}")
+        owner = login
+    basic = base64.b64encode(f"x-access-token:{tok}".encode()).decode()
+    env = os.environ | {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_COUNT": "1",
+                        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}"}
+    push = subprocess.run(["git", "-c", "credential.helper=", "push", "--force",
+                           f"https://github.com/{owner}/{name}.git", f"{branch}:refs/heads/{remote_branch}"],
+                          cwd=repo, text=True, capture_output=True, env=env, timeout=300)
+    if push.returncode != 0:
+        raise RuntimeError(f"git push failed: {push.stderr.strip()[-300:]}")
+    head = remote_branch if owner == slug.split("/", 1)[0] else f"{owner}:{remote_branch}"
+    _, open_prs = _api("GET", f"/repos/{slug}/pulls?state=open&head={owner}:{remote_branch}", tok)
+    if isinstance(open_prs, list) and open_prs:
+        return open_prs[0]["html_url"]
+    status, pr = _api("POST", f"/repos/{slug}/pulls", tok,
+                      {"title": title[:250], "head": head, "base": base, "body": body, "draft": draft})
+    if status not in (200, 201):
+        raise RuntimeError(f"GitHub refused the pull request ({status}): {str(pr)[:300]}")
+    return pr["html_url"]
 
 
 def open_pull_request(repo: Path, branch: str, title: str, body: str, *, draft: bool = False,
@@ -58,10 +164,13 @@ def open_pull_request(repo: Path, branch: str, title: str, body: str, *, draft: 
     """Push `branch` and open a PR against `base_branch` (when it exists on GitHub) or the default branch. Pushes to
     the repository itself when the signed-in account may, otherwise to a fork. Never merges. Returns the PR URL."""
     assert_permitted(GitHubPermission.CREATE_PR)
-    if not shutil.which("gh"):
-        raise RuntimeError("the GitHub CLI `gh` is required to open pull requests (install it and run `gh auth login`)")
-    slug = github_slug(repo)
     remote_branch = remote_branch or branch
+    if not gh_login():
+        if github_token():
+            return _open_pr_with_token(repo, branch, title, body, draft=draft, remote_branch=remote_branch,
+                                       base_branch=base_branch)
+        raise RuntimeError("no GitHub login: run `gh auth login` (or set GITHUB_TOKEN) so LCC can open the PR")
+    slug = github_slug(repo)
     login = _run(["gh", "api", "user", "--jq", ".login"], repo)
     meta = _run(["gh", "api", f"repos/{slug}", "--jq", "[.permissions.push, .default_branch] | @tsv"], repo)
     can_push, _, base = meta.partition("\t")

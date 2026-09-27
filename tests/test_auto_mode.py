@@ -191,3 +191,58 @@ def test_optimization_requests_are_recognised():
     assert detect_kind("Speed up the search endpoint", "") == "optimize"
     assert detect_kind("Crash in the slow path", "") == "bug"  # a crash is a bug, even if it mentions slow
     assert detect_kind("mean() returns the wrong value", "") == "bug"
+
+
+def test_github_login_is_asked_for_when_missing(monkeypatch):
+    import lcc.github_pr as gp
+    from lcc.session import ensure_github_login
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(gp, "gh_login", lambda: None)
+    monkeypatch.setattr(gp, "token_login", lambda tok: "alice" if tok == "good-token" else None)
+    quiet = Console(quiet=True)
+    assert ensure_github_login(quiet, interactive=False) is None  # never blocks a non-interactive run
+    monkeypatch.setattr("builtins.input", lambda prompt="": "2")
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "good-token")
+    assert ensure_github_login(quiet, interactive=True) == "alice"
+    assert os.environ["GH_TOKEN"] == "good-token"  # this process only
+    monkeypatch.delenv("GH_TOKEN")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "3")
+    assert ensure_github_login(quiet, interactive=True) is None  # the user can skip PRs
+
+
+def test_pr_with_only_a_token_no_gh_cli(tmp_path, monkeypatch):
+    """A user with a GitHub token but no gh CLI: push to their fork through the REST API and open a draft PR."""
+    import lcc.github_pr as gp
+    from lcc.session import resolve_repo
+
+    upstream, fork, _log = _fake_github(tmp_path, monkeypatch)
+    monkeypatch.setattr(gp, "gh_login", lambda: None)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+    calls = []
+
+    def api(method, path, token, payload=None):
+        calls.append((method, path, payload))
+        if path == "/user":
+            return 200, {"login": "bot"}
+        if path == "/repos/acme/demo":
+            return 200, {"default_branch": "main", "permissions": {"push": False}}
+        if path == "/repos/bot/demo":
+            return 200, {}
+        if method == "POST" and path == "/repos/acme/demo/pulls":
+            return 201, {"html_url": "https://github.com/acme/demo/pull/9"}
+        return (202, {}) if method == "POST" else (200, [])
+
+    monkeypatch.setattr(gp, "_api", api)
+    repo = resolve_repo("https://github.com/acme/demo", tmp_path / "ws", Console(quiet=True))
+    subprocess.run(["git", "checkout", "-q", "-b", "agent/T"], cwd=repo, check=True)
+    (repo / "fix.txt").write_text("x\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "fix"], cwd=repo, check=True)
+    url = gp.open_pull_request(repo, "agent/T", "fix: thing", "body", draft=True, remote_branch="lcc/t")
+    assert url == "https://github.com/acme/demo/pull/9"
+    pr = next(p for m, path, p in calls if m == "POST" and path.endswith("/pulls"))
+    assert pr["head"] == "bot:lcc/t" and pr["base"] == "main" and pr["draft"] is True
+    assert "lcc/t" in subprocess.run(["git", "branch", "--list"], cwd=fork, text=True, capture_output=True).stdout
+    assert subprocess.run(["git", "branch", "--list"], cwd=upstream, text=True, capture_output=True).stdout.split() == ["*", "main"]

@@ -539,6 +539,53 @@ def pr_body(cand, summary: dict, head_ref: str = "", others: list[dict] | None =
     return "\n\n".join(lines[:2]) + "\n\n" + "\n".join(lines[2:])
 
 
+def ensure_github_login(console: Console, interactive: bool) -> str | None:
+    """Pull requests need a GitHub login (a username alone cannot push code or open a PR). Use the GitHub CLI or a
+    token if one is there; otherwise ask the user to sign in. The token is kept in this process only."""
+    import getpass
+
+    from lcc.github_pr import gh_login, github_identity, token_login
+
+    login, how = github_identity()
+    if login:
+        console.print(f"GitHub: pull requests will be opened as [bold]@{login}[/] ({'GitHub CLI' if how == 'gh' else 'token'})")
+        return login
+    if not interactive:
+        console.print("[yellow]No GitHub login found, so verified fixes will stay on local branches. To get pull "
+                      "requests, run `gh auth login` or set GITHUB_TOKEN, then run again.[/]")
+        return None
+    console.print(Panel(
+        "When a fix is proven, LCC opens a pull request on your GitHub account.\n"
+        "GitHub needs you to sign in for that: a username alone can't push code or open a PR.\n\n"
+        "  [bold]1[/]  Sign in with your browser (recommended: GitHub's own login page; LCC never sees your password)\n"
+        "  [bold]2[/]  Paste a personal access token (hidden, used only for this run, never saved)\n"
+        "  [bold]3[/]  Skip pull requests (fixes stay on local branches)",
+        title="GitHub login", border_style="cyan"))
+    choice = (input("choose 1, 2 or 3 [1]> ").strip() or "1")[:1]
+    if choice == "1":
+        if shutil.which("gh"):
+            subprocess.run(["gh", "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"])
+            login = gh_login()
+        else:
+            console.print("The GitHub CLI isn't installed (https://cli.github.com, or `brew install gh`). "
+                          "You can paste a token instead.")
+            choice = "2"
+    if choice == "2" and not login:
+        console.print("Create one at https://github.com/settings/tokens (classic, scope: [bold]repo[/]), then paste it.")
+        tok = getpass.getpass("GitHub token (input hidden)> ").strip()
+        if tok:
+            login = token_login(tok)
+            if login:
+                os.environ["GH_TOKEN"] = tok  # this process only: never written to disk
+            else:
+                console.print("[red]GitHub rejected that token.[/]")
+    if login:
+        console.print(f"GitHub: pull requests will be opened as [bold]@{login}[/]")
+        return login
+    console.print("Skipping pull requests: verified fixes will stay on local branches.")
+    return None
+
+
 def _pr_permission(repo: Path, cfg: Config, console: Console, wanted: bool, explicit: bool, n: int) -> bool:
     """PRs on someone else's repository are outward-facing: ask first (or require PR=1), and respect a cap."""
     from lcc.github_pr import repo_access
@@ -834,6 +881,8 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
         if not spec:
             console.print("[red]auto mode needs a repository:[/] make auto REPO=<url|path>")
             return 2
+        if prs and not ensure_github_login(console, sys.stdin.isatty()):
+            prs = False
         out = auto_fix(spec, cfg, provider, console, open_prs=prs, base=base_arg or "", explicit_pr=bool(open_prs))
         return 0 if out["fixed"] or not out["candidates"] else 1
     interactive = sys.stdin.isatty() and not issue_arg
@@ -843,6 +892,8 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
         if not issue_arg.strip():
             console.print("[red]No issue given.[/] Pass ISSUE=<url|file|text>, pipe the issue on stdin, or run interactively.")
             return 2
+    if prs and not ensure_github_login(console, sys.stdin.isatty()):  # ask up front, not after the work is done
+        prs = False
     status = 0
     while True:
         raw = issue_arg if issue_arg else _read_multiline(console)

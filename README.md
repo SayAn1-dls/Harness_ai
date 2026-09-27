@@ -49,7 +49,7 @@ Grading ourselves on bugs we wrote ourselves felt like cheating. So we went thro
 - To check the grading, we used a model that does nothing. It got **0/20**, so there's no passing by doing nothing.
 - **There's no live score yet.** Our DeepSeek account ran out of credit (HTTP 402), and our Gemini project was blocked (HTTP 403), before we could run it. With a working DeepSeek or Qwen key it's one command, `make eval-real`. We won't put a number here until we have one.
 
-On top of that there are **102 automated tests**. They run on every push, on Python 3.11, 3.12 and 3.13 (currently green ✅), and we've also run them in a clean Linux container.
+On top of that there are **104 automated tests**. They run on every push, on Python 3.11, 3.12 and 3.13 (currently green ✅), and we've also run them in a clean Linux container.
 
 ---
 
@@ -62,6 +62,8 @@ make setup
 make doctor     # one tiny request: does the key work, is there balance, does the model exist?
 make run        # paste a bug report, a GitHub issue link, or just a repo link
 ```
+
+If LCC can't find a GitHub login, it asks you to sign in before it starts: through your browser (GitHub's own login page), or by pasting a token that's used only for that run and never saved. A username alone isn't enough, because GitHub only lets a signed-in account push code and open pull requests. You can also skip it, and the fixes stay on local branches.
 
 <img src="docs/assets/terminal.svg" alt="What a run looks like" width="100%"/>
 <sub>This shows what the output looks like. It is not a recording of a real run.</sub>
@@ -187,7 +189,7 @@ We tested each of these. Inside the container the key isn't there, your home fol
 | `make eval-real` | Live score on the 20 real bugs |
 | `make ablation` | Same, with planner, reviewer and intake turned off one at a time |
 | `make bench-check` | Check the benchmark again: 20/20 valid, 20/20 with the real fix, 0/20 doing nothing |
-| `make test` | 102 tests plus a small offline benchmark, no key needed |
+| `make test` | 104 tests plus a small offline benchmark, no key needed |
 | `make doctor` · `make clean` | Health check · clean up |
 </details>
 
