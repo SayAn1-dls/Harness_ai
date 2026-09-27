@@ -31,6 +31,7 @@ jobs:
   real-benchmark:
     name: real benchmark integrity (20 real bug fixes)
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # ~16 min on GitHub runners: 20 real test suites, three passes
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

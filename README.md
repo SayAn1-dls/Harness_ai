@@ -1,165 +1,178 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" alt="LCC AI Harness: Issue, Context, Plan, Code, Test, Recover, Verify, Pull request" width="100%"/>
+<img src="docs/assets/hero.svg" alt="LCC AI Harness" width="100%"/>
 
-# LCC: Autonomous Coding-Agent Harness
-
-**An issue, or just a repo link, in → a test-proven fix on a branch, or a draft PR a human reviews → out.**
+# LCC: an AI teammate that fixes bugs *and proves it*
 
 [![CI](https://github.com/SayAn1-dls/Harness_ai/actions/workflows/ci.yml/badge.svg?branch=agent/core-loop)](https://github.com/SayAn1-dls/Harness_ai/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)
-![Models](https://img.shields.io/badge/models-DeepSeek%20%C2%B7%20Qwen%20%C2%B7%20OpenAI--compatible-6f42c1)
-![Merge](https://img.shields.io/badge/auto--merge-never-critical)
+![Models](https://img.shields.io/badge/works%20with-DeepSeek%20%C2%B7%20Qwen%20%C2%B7%20any%20OpenAI--compatible-6f42c1)
+![Merge](https://img.shields.io/badge/merges%20by%20itself-never-critical)
 
 </div>
 
-## Results so far: the honest version
+---
 
-| What | Result | What it proves |
+## So what is this?
+
+Ask a chatbot to fix a bug and it hands you code that *looks* right. Maybe it works, maybe it doesn't, and you're the one who has to find out.
+
+**We built the part that finds out.**
+
+LCC is a **harness**: the workbench around an AI model. You give it a bug report (or just a GitHub link), and it:
+
+1. 🔍 **reads the repository** the way a new teammate would, and finds the files that matter;
+2. 🛠️ **lets the model fix the bug** with real tools: search, read, edit, run the tests;
+3. 🧪 **refuses to believe the model.** The fix only counts if a test **fails before the change and passes after it**;
+4. 🔁 **tries again, smarter,** when it fails, carrying forward what went wrong;
+5. 📬 **hands you a branch or a draft pull request.** A human always decides whether it gets merged.
+
+> The model is the brain. The harness is the discipline.
+
+---
+
+## Where we are, honestly
+
+<img src="docs/assets/scoreboard.svg" alt="Scoreboard" width="100%"/>
+
+| | Result | Why it matters |
 |---|---|---|
-| **Real benchmark:** 20 real bug fixes from 6 libraries (more-itertools, toolz, boltons, tabulate, sqlparse, parse) | Each hidden test **fails at the parent commit and passes at the real fix**: 20/20 validated (`make bench-check`) | The benchmark is real and gradeable |
-| Harness on those 20 repos with the reference fix replayed (oracle, **not a model**) | **20/20** verified and graded; a do-nothing model scores **0/20** | Baseline, fail-to-pass proof, lint, review and grading work on real test suites, and the grader can't be gamed by doing nothing |
-| **Live model on the real benchmark** | ⏳ **not run yet**: needs a funded DeepSeek or Qwen key (`make eval-real`) | This is the number that matters, and it is still missing |
-| Unit and integration tests | 91 passing on macOS and in a clean `python:3.11-slim` Linux container; CI runs 3.11, 3.12 and 3.13 | Pipeline correctness |
-| Full pipeline through the real HTTP adapter against a strict fake DeepSeek-style server | Passes: every tool call answered, no `null` content, valid schemas, `json` present in JSON mode | Lowers the risk of the first live run; does not replace it |
-| Offline toy benchmark (7 fixtures) | 7/7 with **scripted** model replies | Wiring only, not model quality |
+| 🧾 **Real benchmark** | 20 real bugs, taken from the actual history of 6 open-source libraries (more-itertools, toolz, boltons, tabulate, sqlparse, parse) | Not toy examples we wrote ourselves. Each one was a real bug that real maintainers fixed |
+| ✅ **Benchmark is valid** | 20/20: each hidden test fails before the real fix and passes after it | The grader measures the right thing |
+| ⚙️ **Pipeline works on real repos** | 20/20 when the known fix is fed through every stage | Setup, testing, proof, review and grading all work on real codebases |
+| 🚫 **Can't be cheated** | A model that changes nothing scores **0/20** | You can't pass by doing nothing |
+| 🤖 **Live DeepSeek or Qwen score** | **Not run yet.** We need a funded API key. One command: `make eval-real` | The number that really matters, and we say so openly |
+| 🧪 **Tests** | 91 passing on macOS and Linux; CI runs every push on Python 3.11 to 3.13 | Nothing breaks silently |
 
-<img src="docs/assets/terminal.svg" alt="Illustrative terminal session of make auto" width="100%"/>
-<sub>Illustrative session (not a recording).</sub>
+---
 
-## Quickstart
+## Try it in 60 seconds
 
 ```bash
 git clone https://github.com/SayAn1-dls/Harness_ai.git && cd Harness_ai
-export AI_API_KEY="<DeepSeek or Qwen key>"   # the only credential; never written to disk
-make setup && make doctor                     # doctor makes ONE 8-token call to check key, balance and model
-make run                                      # paste an issue URL, issue text, or just a repo link
+export AI_API_KEY="your DeepSeek or Qwen key"   # the only secret, never saved to disk
+make setup        # installs everything
+make doctor       # one tiny test call: is the key valid? is there balance? does the model exist?
+make run          # paste a bug report, a GitHub issue link, or just a repo link
 ```
+
+<img src="docs/assets/terminal.svg" alt="What a run looks like" width="100%"/>
+<sub>An illustration of the output, not a recording.</sub>
+
+---
+
+## How it thinks
+
+<img src="docs/assets/loop.svg" alt="The fix, test, diagnose, retry loop" width="100%"/>
+
+| Step | In plain words |
+|---|---|
+| **Understand** | Turns the bug report into checkable goals ("`add(2, 3)` must return 5"). If the report is truly unanswerable, it asks a human instead of guessing. |
+| **Find the code** | Indexes the repo, maps which file imports which, and ranks files by how well they match the bug. |
+| **Fix** | The model works in a loop with 10 tools: search, find a definition, list files, read lines, edit, create a file, run tests, run a shell command, git history, finish. |
+| **Prove** | Compares the test results with a run from *before* the change. Old failures don't block the fix; new failures do. A new test must fail without the fix. |
+| **Retry or stop** | On failure it diagnoses why and tries again with that knowledge. It gives up early when retrying is pointless: the same error twice, out of budget, or more tests failing each time. |
+
+---
+
+## Just a repo link? Auto mode
+
+```bash
+make auto REPO=https://github.com/someone/their-project
+```
+
+No bug report needed. It hunts for problems on its own: tests that already fail, real defects found by a static analyser (never style nitpicks), and a short AI code review that must show *how to trigger* each bug.
+
+Every candidate goes through the same proof. **If it can't prove the bug with a failing test, it drops it**, so imagined bugs never become pull requests. What survives becomes a **draft PR** on your fork, for the maintainer to judge. It asks before touching a repo you don't own, stops at 3 PRs, and runs the stranger's code inside Docker when Docker is running.
+
+---
+
+## What we built along the way
+
+<img src="docs/assets/journey.svg" alt="Project journey" width="100%"/>
+
+<details>
+<summary><b>The full story: every stage and the problem it solved</b></summary>
+
+1. **Core loop.** A model that can use tools, not just type code. Every decision is written to a durable log (`events.jsonl`), so a run can be audited afterwards.
+2. **Proof, not promises.** Our first benchmark said four bugs were fixed when the model had changed *nothing*: the tests already passed. That led to the rule that defines the project: a fix counts only if a test flips from failing to passing.
+3. **Hackathon interface.** `make setup / run / test / clean`, one key (`AI_API_KEY`), one config file.
+4. **DeepSeek and Qwen.** The key is recognised automatically without spending tokens. A tiny test call catches a bad key, zero balance or a missing model in seconds. It falls back to a model the account actually has, and adapts to local servers that can't do tool calls.
+5. **Baseline-aware testing.** Real projects often have tests that are already broken. Those no longer block a correct fix, while any *new* breakage still fails it.
+6. **Auto mode.** A repo link in, draft PRs out, and never an automatic merge.
+7. **QA pass.** We attacked our own code and found 12 real bugs. For example, one unrelated old lint error made *every* correct fix fail: 22 model calls wasted, versus 5 now. Another: a model answering `"none"` got split into four "blocking questions". Each bug now has a test.
+8. **A real benchmark.** We mined 101 real bug-fix commits: 63 passed our checks (the test fails before the fix and passes after it), and we picked 20 clear bug fixes from those.
+9. **Security.** The target project's code never sees your API keys. A git guard stops it resetting your repo, even from inside Python code. Docker mode takes away the network and your files too.
+10. **Leaner prompts.** On the same 16-step session, the prompt shrank from about 120.8k to about 96.5k tokens (−20%): no re-sent stale file reads, one-line output for passing tests, smaller tool descriptions.
+</details>
+
+---
+
+## What we haven't done yet
+
+- ❌ **No live-model score.** Everything above tests the harness, not how well DeepSeek or Qwen fixes bugs. That's the next command we run.
+- ❌ We haven't yet proven that each helper step (planner, reviewer, intake) is worth its tokens. `make ablation` measures that once we have a key.
+- ⚠️ Python is the main target. JavaScript, Go and Rust tests run, but get less help.
+- ⚠️ Token figures are estimates from scripted runs; live runs record the provider's billed numbers.
+- ⚠️ 20 tasks is a small benchmark, and some of these public fixes may be in the models' training data.
+
+---
+
+<details>
+<summary><b>📖 All commands</b></summary>
 
 | Command | What it does |
 |---|---|
-| `make run ISSUE=<url\|file\|text> REPO=<path\|url> [BASE=<sha>]` | Fix one issue on an `agent/*` branch. `BASE` (or `REPO=url@sha`, or a `Base commit:` line) pins the commit |
-| `make auto REPO=<url> [PR=0\|1]` | No issue: find bugs → fix → prove → draft PRs (see [Auto mode](#auto-mode)) |
-| `make eval-real` / `make eval` | Live score on the 20 real tasks / the 7 toy fixtures |
-| `make bench-check` | Re-prove the real benchmark: validity, oracle 20/20, do-nothing 0/20 (no key) |
-| `make ablation` | Real tasks with the planner, reviewer and intake calls switched off in turn: which ones earn their tokens (needs a key) |
-| `make test` | 91 tests + offline toy benchmark (no key) |
-
-## How it works
-
-```mermaid
-flowchart LR
-    A([Issue / repo link]) --> B[Intake<br/><sub>criteria · ambiguity</sub>]
-    B -->|unanswerable| X([Escalate])
-    B --> C[Context<br/><sub>index · rank · snapshot</sub>]
-    C --> E[Plan]
-    E --> F[Coder<br/><sub>tool loop</sub>]
-    F --> G{Verify<br/><sub>vs baseline · proof</sub>}
-    G -->|pass| H[Review + Judge]
-    H -->|PASS| I([Commit on agent/* → PR])
-    G -->|fail| R[Recover<br/><sub>diagnose · replan</sub>]
-    H -->|blocking finding| R
-    R --> F
-```
-
-- **Context:** the repo is indexed (Python AST; regex symbols for JS/TS/Go/Rust) and files are ranked by symbol hits, keyword overlap, import-graph PageRank and one-hop dependencies. The snapshot score is *measured*: whether the files the issue names are included, symbol and dependency coverage, requirement terms, and a related test. The gate is 75.
-- **Coder:** a tool-calling loop that locates the code, reproduces the bug, fixes the root cause, adds a regression test, runs it, and calls `finish`. Tools: `search_code`, `find_symbol`, `read_file`, `repo_tree`, `edit_file`, `write_file`, `run_test`, `shell`, `git_history`.
-- **Verify:** a fix counts only if **no test that passed before now fails** (baseline-aware, so pre-existing failures don't block) **and** there is proof: a baseline failure now passes, or a new test fails on the base code and passes with the change. Lint checks only the changed files, and only for errors the change introduced.
-- **Recover:** the failure is classified, and the next attempt gets the diff, the failure and the diagnosis. The loop stops when the same failure repeats, the budget runs out, or failing tests rise across attempts. There are no diagnosis calls after the last attempt.
-
-<img src="docs/assets/loop.svg" alt="Implement, verify, diagnose, replan loop" width="100%"/>
-
-## Models: DeepSeek, Qwen, or your own
-
-With `provider = "auto"`, a plain `sk-` key is identified with `GET /models`, which costs no tokens, and it is **only ever sent to DeepSeek and DashScope**.
-
-- DeepSeek: default `deepseek-chat`, falling back to `deepseek-reasoner`.
-- Qwen (DashScope, international or China): default `qwen3-coder-plus`, falling back to `qwen-plus`, then `qwen-max`.
-
-A preflight call reports 401, 402, 403 or 404 in seconds, and these errors stop the run instead of failing every task. To pin a model, set `LCC_MODEL`; `LCC_BASE_URL` points the harness at any OpenAI-compatible server (vLLM, Ollama…).
-
-The adapter handles server differences automatically:
-- Parameters a server rejects (`enable_thinking`, `response_format`, `parallel_tool_calls`, `seed`) are dropped and retried.
-- A server **without function calling** gets the tools described in the prompt, and `<tool_call>` blocks are parsed from the reply.
-- `<think>` blocks are stripped.
-- Malformed JSON is coerced safely: a string `"none"` is an empty list, not four characters.
-
-## Auto mode
-
-`make auto REPO=https://github.com/owner/repo` works in three steps:
-1. **Find.** It runs the repo's test suite (failing tests), ruff limited to *defect* rules (undefined names, mutable default arguments, late-binding closures, injection risks; no style rules), and a model audit of the most central files. The audit must name a concrete input that triggers each bug.
-2. **Prove.** Each candidate goes through the full pipeline, and a candidate that can't be proven with a failing test is dropped.
-3. **Open PRs.** One PR per verified fix, **as a draft**. On a repo you can't push to, the harness asks first (or needs `PR=1`), pushes to your fork, and stops at 3 open PRs. It never merges.
-
-## Security: what is and isn't isolated
-
-| Mode | Target code (installs, tests, shell) | Protection |
-|---|---|---|
-| `sandbox = "auto"` (default) | `make auto` on a repository: **Docker when it is running**, otherwise the row below with a warning. `make run`: the row below |
-| `sandbox = "none"` | Runs on your machine | Credentials (`*KEY*`, `*TOKEN*`, cloud, SSH agent) are **stripped from its environment**. A `git` guard first on PATH blocks state-changing git in the task repo, even from `subprocess` inside Python. Destructive shell commands are blocked. **It can still read files in your home directory.** |
-| `sandbox = "docker"` | Runs in a container | **No network** during tests, **no credentials**, only the workspace mounted (tested: the key is `None`, home is invisible, network is unreachable). Forced with `LCC_SANDBOX=docker`. |
-
-On top of that, work happens only on `agent/*` branches, your uncommitted changes are stashed and restored, folders that aren't git roots are copied instead of modified, and merge permission is never granted.
-
-## Token efficiency (measured)
-
-The coder's static prefix is byte-stable, so DeepSeek and DashScope prefix caching hits (`cached_share` in reports). A later read of the same lines replaces the earlier one, a passing test run is one line and a failing run shows only the failures, tool schemas are small (721 tokens per call), JSON mode avoids repair calls, and the loop stops early when retrying can't help.
-
-| Scripted comparison (identical steps, so only prompt size differs) | Before | After |
-|---|---:|---:|
-| 16-step session on a large file with failing tests | 120,783 | **96,453 (−20.1%)** |
-| 7 toy tasks, prompt tokens | 71,215 | **68,720 (−3.5%)**, including one extra intake retry per task, because the offline mock answers with the vague criterion "Tests pass", which the stricter intake check now rejects |
-| Repo with an unrelated old lint error | 22 calls, failed | **5 calls, verified** |
-
-These are character-based estimates from scripted runs. Real billed tokens will only be known from a live `make eval-real`.
-
-## Limits (read before judging)
-
-- **No live-model score yet.** Everything above measures the harness, not DeepSeek or Qwen solving issues.
-- **The planner, reviewer and intake calls are not yet proven to pay off.** `make ablation` measures it once a key is available.
-- Token figures are character-based estimates; live runs record the provider's billed usage (`tokens_in`, `tokens_out`, `tokens_cached`).
-- **Python is the first-class target.** JS, TS, Go and Rust get test detection, output parsing and `npm ci`, but no language-specific linting or static analysis.
-- The real benchmark is small (20 tasks, all Python libraries); models may have seen some of these public fixes during training.
-- The default mode is not a sandbox against a hostile repository; use `sandbox = "docker"` for that.
-
-<details>
-<summary><b>Configuration</b> (<code>lcc.config.toml</code>, all overridable by environment variables)</summary>
-
-| Key | Default | Meaning |
-|---|---|---|
-| `[model] provider` / `model` / `base_url` | `auto` / `""` / `""` | `LCC_PROVIDER`, `LCC_MODEL`, `LCC_BASE_URL` |
-| `[model] temperature` / `seed` | `0.0` / `7` | Reproducibility |
-| `[run] max_iterations` / `token_budget` / `coder_max_steps` | `5` / `300000` / `30` | Per-issue budgets |
-| `[run] test_timeout` / `preflight` / `sandbox` / `ablate` | `900` / `true` / `auto` / `[]` | `LCC_SANDBOX`, `LCC_ABLATE=planner,reviewer,intake` |
-| `[auto] max_fixes` / `audit_calls` / `pr_draft` / `max_open_prs` | `3` / `2` / `true` / `3` | Auto mode |
-
-The credential is read only from `AI_API_KEY`: never from config, docs or git.
+| `make run ISSUE=<link or text> REPO=<path or url> [BASE=<commit>]` | Fix one bug, non-interactive |
+| `make auto REPO=<url> [PR=0\|1]` | Find → fix → prove → draft PRs (`PR=0`: keep local branches only) |
+| `make eval-real` | Live score on the 20 real bugs |
+| `make ablation` | Same, with the planner, reviewer and intake switched off in turn |
+| `make bench-check` | Re-prove the benchmark itself (valid 20/20, reference fix 20/20, do-nothing 0/20) |
+| `make test` | 91 tests + an offline mini-benchmark, no key needed |
+| `make doctor` / `make clean` | Health check / clean up |
 </details>
 
 <details>
-<summary><b>Outputs and durable state</b></summary>
+<summary><b>🤖 Models and settings</b></summary>
 
-- `outputs/<task>.patch` and `.json`: diff, status, iterations, tokens (in/out/cached), calls, runtime.
-- `agent/<task>` branch: the verified commit.
-- `<repo>/harness/state/events.jsonl`: every `MODEL_CALL`, `DECISION`, `BASELINE` and `RECOVERY` event.
-- `<repo>/harness/artifacts/`: intake, plans, coder transcripts, verification, `HANDOFF.md`.
+- **DeepSeek:** `deepseek-chat`, falling back to `deepseek-reasoner`.
+- **Qwen (Alibaba DashScope, international or China):** `qwen3-coder-plus`, then `qwen-plus`, then `qwen-max`.
+- **Your own model:** `export LCC_BASE_URL=http://localhost:8000/v1 LCC_MODEL=<name>`. It works even if the server can't do tool calls.
+- A plain `sk-` key is only ever shown to DeepSeek and DashScope, never to other companies.
+- Everything lives in `lcc.config.toml`: `LCC_MODEL`, `LCC_PROVIDER`, `LCC_SANDBOX=docker`, `LCC_ABLATE=planner,reviewer`. Budgets: 5 attempts, 300k tokens and 30 tool steps per bug.
 </details>
 
 <details>
-<summary><b>Project map</b></summary>
+<summary><b>🛡️ Safety rules it never breaks</b></summary>
 
-`session.py` (make run / auto) · `orchestrator.py` (state machine, verify, recover) · `agents.py` · `agent_loop.py` · `tools.py` · `sandbox.py` (credential scrub, git guard, Docker) · `context_engine.py` · `discover.py` · `github_pr.py` · `model.py` (DeepSeek/Qwen adapter) · `bench.py` (real + toy benchmark, oracle, validation) · `eval.py` · `store.py`. Benchmarks: `benchmarks/real/` (20 real), `benchmarks/tasks/` (7 toy). Decisions log: `harness/docs/DECISIONS.md`.
+- It works only on `agent/*` branches and **never merges**.
+- Your unsaved changes are stashed before a run and put back afterwards.
+- The target's code runs without your keys, and it can't reset, commit to or push your repo.
+- In Docker mode the target's code has no network, and only the project folder is visible.
+- Your key is read from `AI_API_KEY` only, and is never written to any file.
 </details>
 
 <details>
-<summary><b>Troubleshooting</b></summary>
+<summary><b>🗂️ Where things live</b></summary>
 
-| Message | Fix |
-|---|---|
-| `placeholder` / `could not identify the provider` | Export the real key, or set `LCC_PROVIDER` |
-| `(401)` / `(402)` / `(403)` / `(404)` | Wrong key / top up / other project or region / set `LCC_MODEL` |
-| `NOT VERIFIED (no proof)` | The change had no failing-then-passing test; see `harness/artifacts/verification_*.json` |
-| `sandbox = docker, but Docker is not available` | Start Docker, or use `sandbox = "none"` |
+`src/lcc/`:
+- `session.py`: what `make run` and `make auto` do
+- `orchestrator.py`: the step-by-step brain
+- `agents.py`: the prompts
+- `agent_loop.py` + `tools.py`: the model's hands
+- `sandbox.py`: key stripping, git guard, Docker
+- `model.py`: DeepSeek and Qwen
+- `bench.py`: the benchmark
+- `discover.py`: bug hunting for auto mode
+
+Elsewhere:
+- `benchmarks/real/`: the 20 real bugs
+- `benchmarks/tasks/`: 7 small practice bugs
+- `harness/docs/DECISIONS.md`: every design decision, with the reason for it
 </details>
 
-<div align="center"><sub>AI Harness Hackathon 2026 · the model reasons, the harness makes it reliable, and the tests decide.</sub></div>
+<div align="center">
+<br/>
+<b>We didn't try to build a smarter model. We built a stricter workbench, so any model has to prove its fixes.</b>
+<br/><sub>AI Harness Hackathon 2026</sub>
+</div>

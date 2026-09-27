@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 250" width="960" height="250" role="img" aria-label="Project journey: core loop, proof, hackathon interface, DeepSeek and Qwen, auto mode, QA pass, real benchmark, sandbox">
+  <defs>
+    <style>
+      .t { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .h { fill: #e2e8f0; font-size: 12.5px; font-weight: 700; }
+      .s { fill: #7c8ba1; font-size: 10.5px; }
+      .dot { fill: #1e293b; stroke: #334155; stroke-width: 2; animation: on 9s ease-in-out infinite; }
+      @keyframes on { 0%, 100% { fill: #1e293b; stroke: #334155; } 8%, 88% { fill: #2dd4bf; stroke: #99f6e4; } }
+      .bar { stroke: url(#g); stroke-width: 4; stroke-dasharray: 860; stroke-dashoffset: 860; animation: draw 9s ease-in-out infinite; }
+      @keyframes draw { 0% { stroke-dashoffset: 860; } 70%, 92% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 860; } }
+    </style>
+    <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#818cf8"/></linearGradient>
+  </defs>
+  <rect width="960" height="250" rx="18" fill="#0b1220"/>
+  <text x="32" y="40" class="t" font-size="19" font-weight="800" fill="#f1f5f9">How we got here</text>
+  <line x1="60" y1="118" x2="920" y2="118" stroke="#1e293b" stroke-width="4"/>
+  <line x1="60" y1="118" x2="920" y2="118" class="bar"/>
+  <g class="t" text-anchor="middle">
+    <circle cx="60" cy="118" r="11" class="dot" style="animation-delay:0s"/>
+    <text x="60" y="90" class="h">Core loop</text><text x="60" y="150" class="s">tool-using coder</text><text x="60" y="164" class="s">+ recovery</text>
+    <circle cx="183" cy="118" r="11" class="dot" style="animation-delay:.6s"/>
+    <text x="183" y="90" class="h">Proof</text><text x="183" y="150" class="s">test must fail,</text><text x="183" y="164" class="s">then pass</text>
+    <circle cx="306" cy="118" r="11" class="dot" style="animation-delay:1.2s"/>
+    <text x="306" y="90" class="h">make run</text><text x="306" y="150" class="s">hackathon</text><text x="306" y="164" class="s">interface</text>
+    <circle cx="429" cy="118" r="11" class="dot" style="animation-delay:1.8s"/>
+    <text x="429" y="90" class="h">DeepSeek · Qwen</text><text x="429" y="150" class="s">preflight, fallbacks,</text><text x="429" y="164" class="s">any local LLM</text>
+    <circle cx="552" cy="118" r="11" class="dot" style="animation-delay:2.4s"/>
+    <text x="552" y="90" class="h">Auto mode</text><text x="552" y="150" class="s">repo link →</text><text x="552" y="164" class="s">bugs → draft PRs</text>
+    <circle cx="675" cy="118" r="11" class="dot" style="animation-delay:3s"/>
+    <text x="675" y="90" class="h">QA pass</text><text x="675" y="150" class="s">12 real bugs</text><text x="675" y="164" class="s">found &amp; fixed</text>
+    <circle cx="798" cy="118" r="11" class="dot" style="animation-delay:3.6s"/>
+    <text x="798" y="90" class="h">Real benchmark</text><text x="798" y="150" class="s">20 real fixes,</text><text x="798" y="164" class="s">validated</text>
+    <circle cx="920" cy="118" r="11" class="dot" style="animation-delay:4.2s"/>
+    <text x="905" y="90" class="h">Sandbox</text><text x="905" y="150" class="s">no keys, no net,</text><text x="905" y="164" class="s">Docker</text>
+  </g>
+  <text x="32" y="222" class="t s">next stop: a live DeepSeek / Qwen score on the real benchmark</text>
+</svg>
