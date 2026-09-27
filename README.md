@@ -6,7 +6,7 @@
 
 ### We don't trust AI-written fixes. So we built something that makes the AI prove them.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/SayAn1-dls/Harness_ai/ci.yml?branch=agent/core-loop&style=flat-square&label=CI&color=5E8C61&labelColor=141413)](https://github.com/SayAn1-dls/Harness_ai/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/SayAn1-dls/Harness_ai/ci.yml?branch=agent/core-loop&style=flat-square&label=CI&labelColor=141413)](https://github.com/SayAn1-dls/Harness_ai/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20·%203.12%20·%203.13-D97757?style=flat-square&labelColor=141413)
 ![Models](https://img.shields.io/badge/runs%20on-DeepSeek%20·%20Qwen%20·%20your%20own%20LLM-D97757?style=flat-square&labelColor=141413)
 ![Merge](https://img.shields.io/badge/auto--merge-never.%20ever.-B5473A?style=flat-square&labelColor=141413)
