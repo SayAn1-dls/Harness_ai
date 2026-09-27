@@ -34,7 +34,7 @@ One rule decides everything:
 > **A fix only counts if a test fails before the change and passes after it.**
 > If the test doesn't flip, it isn't a fix, however sure the model sounds.
 
-LCC never merges anything by itself. You get a branch or a *draft* pull request, and a person decides.
+When the fix is proven, LCC opens a *draft* pull request on your GitHub repo, with the proof inside. If you started from a GitHub issue, the PR says "Fixes #N", so merging it closes the issue. LCC never merges anything by itself: you read the PR and decide.
 
 ---
 
@@ -49,7 +49,7 @@ Grading ourselves on bugs we wrote ourselves felt like cheating. So we went thro
 - To check the grading, we used a model that does nothing. It got **0/20**, so there's no passing by doing nothing.
 - **There's no live score yet.** Our DeepSeek account ran out of credit (HTTP 402), and our Gemini project was blocked (HTTP 403), before we could run it. With a working DeepSeek or Qwen key it's one command, `make eval-real`. We won't put a number here until we have one.
 
-On top of that there are **100 automated tests**. They run on every push, on Python 3.11, 3.12 and 3.13 (currently green ✅), and we've also run them in a clean Linux container.
+On top of that there are **102 automated tests**. They run on every push, on Python 3.11, 3.12 and 3.13 (currently green ✅), and we've also run them in a clean Linux container.
 
 ---
 
@@ -167,6 +167,7 @@ We tested each of these. Inside the container the key isn't there, your home fol
 ## What's still missing
 
 - **A live score from DeepSeek or Qwen.** Everything above shows the harness works. It doesn't yet show how often a real model fixes the bug.
+- **A real pull request on GitHub.** Opening PRs works in our tests, against a copy of GitHub we set up locally, but it has never opened one on real GitHub.
 - **A real run of auto mode.** Finding, fixing, speeding up and opening pull requests all work in our tests, against a copy of GitHub we set up locally. It hasn't run on real GitHub with a real model yet.
 - **Proof that every step is worth it.** The planner, reviewer and intake steps might cost more tokens than they save. `make ablation` turns each one off and compares. It also needs a key.
 - **Less help outside Python.** Python gets the most support. JavaScript, Go and Rust tests run, but get less help.
@@ -180,13 +181,13 @@ We tested each of these. Inside the container the key isn't there, your home fol
 
 | Command | What it does |
 |---|---|
-| `make run ISSUE=<link or text> REPO=<path or url> [BASE=<commit>]` | Fix one bug without the prompts |
+| `make run ISSUE=<link or text> REPO=<path or url> [BASE=<commit>] [PR=0]` | Fix one bug (or speed up code, if you ask for it) and open a draft PR; `PR=0` keeps it local |
 | `make auto REPO=<url> [PR=0\|1]` | Read the repo → list issues → fix and speed up with proof → draft PRs (`PR=0` keeps everything local) |
 | `make verify PROOF=outputs/<task>.proof.json REPO=<repo>` | Replay a fix's proof: the test fails on the old code and passes with the fix |
 | `make eval-real` | Live score on the 20 real bugs |
 | `make ablation` | Same, with planner, reviewer and intake turned off one at a time |
 | `make bench-check` | Check the benchmark again: 20/20 valid, 20/20 with the real fix, 0/20 doing nothing |
-| `make test` | 100 tests plus a small offline benchmark, no key needed |
+| `make test` | 102 tests plus a small offline benchmark, no key needed |
 | `make doctor` · `make clean` | Health check · clean up |
 </details>
 

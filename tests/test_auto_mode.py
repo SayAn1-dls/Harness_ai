@@ -18,7 +18,8 @@ GH_STUB = r"""#!/bin/sh
 echo "$@" >> "$GH_LOG"
 case "$1 $2" in
   "api user") echo bot ;;
-  "api repos/acme/demo") printf 'false\tmain\n' ;;
+  "api repos/acme/demo") printf '%s\tmain\n' "${GH_CAN_PUSH:-false}" ;;
+  "api repos/acme/demo/branches/main") exit 0 ;;
   "api repos/bot/demo") exit 0 ;;
   "repo fork") exit 0 ;;
   "pr list") echo "" ;;
@@ -151,3 +152,42 @@ def test_foreign_repo_needs_explicit_permission(tmp_path, monkeypatch):
     assert out["fixed"] == 1 and out["prs"] == []
     assert "pr create" not in gh_log.read_text()
     assert subprocess.run(["git", "branch", "--list"], cwd=fork, text=True, capture_output=True).stdout == ""
+
+
+def test_make_run_fixes_an_issue_and_opens_a_pr_on_the_users_repo(tmp_path, monkeypatch):
+    from lcc.session import fix_and_pr, parse_issue, resolve_repo
+
+    upstream, _fork, gh_log = _fake_github(tmp_path, monkeypatch)
+    monkeypatch.setenv("GH_CAN_PUSH", "true")  # the user's own repository
+    monkeypatch.chdir(tmp_path)
+    cfg = load_config()
+    cfg.run.prepare_env = False
+    cfg.run.sandbox = "none"
+    cfg.run.workspaces_dir = str(tmp_path / "ws")
+    cfg.run.outputs_dir = str(tmp_path / "out")
+    issue = parse_issue("mean() returns the wrong value\n\nhttps://github.com/acme/demo/issues/7\n"
+                        "Repository: https://github.com/acme/demo\n\nmean([2, 4]) returns 6, expected 3.")
+    assert issue.number == 7 and issue.kind == "bug"
+    repo = resolve_repo("https://github.com/acme/demo", tmp_path / "ws", Console(quiet=True))
+    provider = ScriptedProvider({"coder": [
+        [tc("edit_file", path="stats.py", old_str="(len(values) - 1)", new_str="len(values)"),
+         tc("write_file", path="tests/test_stats.py", content="from stats import mean\n\ndef test_mean():\n    assert mean([2, 4]) == 3\n")],
+        [tc("finish", summary="mean divided by n-1")]]})
+    summary = fix_and_pr(issue, repo, cfg, provider, Console(quiet=True))
+    assert summary["resolved"] and summary["pr"] == "https://github.com/acme/demo/pull/1", summary.get("pr_error")
+    calls = gh_log.read_text()
+    assert "--repo acme/demo --base main --head lcc/gh-7" in calls  # pushed to the user's repo, not a fork
+    assert "Fixes #7" in calls and "--draft" in calls and "Verify it yourself" in calls
+    branches = subprocess.run(["git", "branch", "--list"], cwd=upstream, text=True, capture_output=True).stdout
+    assert "lcc/gh-7" in branches  # the fix branch is on GitHub, waiting for review
+    assert not any(line.startswith("pr merge") for line in calls.splitlines())
+
+
+def test_optimization_requests_are_recognised():
+    from lcc.session import detect_kind
+
+    assert detect_kind("Optimize parse_rows in loader.py", "") == "optimize"
+    assert detect_kind("Report generation is too slow", "takes 40s on 10k rows") == "optimize"
+    assert detect_kind("Speed up the search endpoint", "") == "optimize"
+    assert detect_kind("Crash in the slow path", "") == "bug"  # a crash is a bug, even if it mentions slow
+    assert detect_kind("mean() returns the wrong value", "") == "bug"

@@ -74,14 +74,27 @@ def fetch_github_issue(owner: str, repo: str, number: int) -> Issue:
         c = httpx.get(base + "/comments", headers=headers, params={"per_page": 10}, timeout=30, follow_redirects=True)
         if c.status_code == 200:
             parts += [f"\n--- comment by {x['user']['login']} ---\n{x.get('body') or ''}" for x in c.json()]
+    body_text = "\n".join(parts).strip()
     return Issue(
         title=data.get("title") or f"Issue #{number}",
-        body="\n".join(parts).strip(),
+        kind=detect_kind(data.get("title") or "", body_text),
+        body=body_text,
         repo_hint=f"https://github.com/{owner}/{repo}",
         number=number,
         url=data.get("html_url") or "",
         labels=[x["name"] for x in data.get("labels") or []],
     )
+
+
+OPTIMIZE_WORDS = re.compile(r"\b(optimi[sz]e|optimi[sz]ation|speed ?up|faster|performance|too slow|slow(?:er|ness)?|"
+                            r"inefficient|quadratic|o\(n\^?2\)|reduce (?:time|latency|memory))\b", re.I)
+BUG_WORDS = re.compile(r"\b(error|exception|crash(?:es|ed)?|traceback|wrong|incorrect|fails?|failing|broken|bug)\b", re.I)
+
+
+def detect_kind(title: str, body: str) -> str:
+    """"optimize" for a speed request (verified by a measured speed-up), else "bug" (verified by a failing test)."""
+    head = f"{title}\n{body[:600]}"
+    return "optimize" if OPTIMIZE_WORDS.search(head) and not BUG_WORDS.search(title) else "bug"
 
 
 def parse_issue(raw: str) -> Issue:
@@ -102,7 +115,7 @@ def parse_issue(raw: str) -> Issue:
     base = BASE_LINE.search(raw)
     num = GH_ISSUE.search(raw)
     return Issue(title=title, body=raw, repo_hint=hint.group(1) if hint else "", base=base.group(1) if base else "",
-                 number=int(num.group(3)) if num else None)
+                 number=int(num.group(3)) if num else None, kind=detect_kind(title, raw))
 
 
 # ------------------------------------------------------------------ repository
@@ -720,8 +733,46 @@ def honesty_text(h: dict) -> str:
     return "\n".join(lines)
 
 
+def fix_and_pr(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console: Console, *,
+               open_prs: bool = True, explicit: bool = False) -> dict:
+    """make run: fix one issue and, once the fix is proven, open a draft pull request on the user's GitHub repo.
+    The PR targets the branch the fix was built on; `Fixes #N` closes the issue when the maintainer merges it."""
+    from types import SimpleNamespace
+
+    from lcc.github_pr import github_slug, open_pull_request
+
+    origin_branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    summary = solve(issue, repo, cfg, provider, console)
+    summary["pr"] = ""
+    if not summary["resolved"] or not open_prs:
+        return summary
+    try:
+        slug = github_slug(repo)
+    except RuntimeError:
+        console.print("[dim]not a GitHub repository: the verified fix stays on its local branch[/]")
+        return summary
+    if not _pr_permission(repo, cfg, console, True, explicit, 1):
+        return summary
+    closes = f"\n\nFixes #{issue.number}" if issue.number and slug.lower() in (issue.url or issue.body[:300]).lower() else ""
+    cand = SimpleNamespace(body=truncate_issue(issue.body) + closes, source="the issue you reported", kind=issue.kind,
+                           title=issue.title)
+    try:
+        summary["pr"] = open_pull_request(
+            repo, summary["branch"], _pr_title(cand), pr_body(cand, summary, f"lcc/{summary['task_id'].lower()}"),
+            draft=cfg.auto.pr_draft, remote_branch=f"lcc/{summary['task_id'].lower()}", base_branch=origin_branch)
+        console.print(f"[bold green]pull request:[/] {summary['pr']}  (draft: review it, then merge or close it)")
+    except Exception as exc:  # noqa: BLE001 - the verified fix is still on its branch
+        summary["pr_error"] = str(exc)
+        console.print(f"[yellow]could not open the pull request:[/] {exc}\nThe verified fix is on branch {summary['branch']}.")
+    return summary
+
+
+def truncate_issue(text: str, limit: int = 3000) -> str:
+    return text if len(text) <= limit else text[:limit] + "\n…"
+
+
 def _pr_title(cand) -> str:
-    prefix = {"security": "fix(security)", "performance": "perf"}.get(cand.kind, "fix")
+    prefix = {"security": "fix(security)", "performance": "perf", "optimize": "perf"}.get(cand.kind, "fix")
     return f"{prefix}: {cand.title[0].lower()}{cand.title[1:]}"
 
 
@@ -835,7 +886,7 @@ def start(issue_arg: str | None, repo_arg: str | None, provider_name: str | None
             issue_arg = None
             continue
         try:
-            summary = solve(issue, repo, cfg, provider, console)
+            summary = fix_and_pr(issue, repo, cfg, provider, console, open_prs=prs, explicit=bool(open_prs))
         except Exception as exc:  # repository setup failed before the harness could run
             console.print(f"[red]could not run on {repo}:[/] {exc}")
             if not interactive:

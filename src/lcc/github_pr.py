@@ -47,16 +47,16 @@ def github_slug(repo: Path) -> str:
 def repo_access(repo: Path) -> tuple[str, bool, int]:
     """(owner/name, may the signed-in account push, how many open PRs that account already has there)."""
     slug = github_slug(repo)
-    can_push = _run(["gh", "api", f"repos/{slug}", "--jq", ".permissions.push"], repo, check=False) == "true"
+    can_push = _run(["gh", "api", f"repos/{slug}", "--jq", ".permissions.push"], repo, check=False).split()[:1] == ["true"]
     mine = _run(["gh", "pr", "list", "--repo", slug, "--author", "@me", "--state", "open", "--json", "number",
                  "--jq", "length"], repo, check=False)
     return slug, can_push, int(mine) if mine.isdigit() else 0
 
 
 def open_pull_request(repo: Path, branch: str, title: str, body: str, *, draft: bool = False,
-                      remote_branch: str | None = None) -> str:
-    """Push `branch` and open a PR against the repository's default branch. Pushes to the repository itself
-    when the signed-in account may, otherwise to a fork. Never merges. Returns the PR URL."""
+                      remote_branch: str | None = None, base_branch: str | None = None) -> str:
+    """Push `branch` and open a PR against `base_branch` (when it exists on GitHub) or the default branch. Pushes to
+    the repository itself when the signed-in account may, otherwise to a fork. Never merges. Returns the PR URL."""
     assert_permitted(GitHubPermission.CREATE_PR)
     if not shutil.which("gh"):
         raise RuntimeError("the GitHub CLI `gh` is required to open pull requests (install it and run `gh auth login`)")
@@ -65,6 +65,9 @@ def open_pull_request(repo: Path, branch: str, title: str, body: str, *, draft: 
     login = _run(["gh", "api", "user", "--jq", ".login"], repo)
     meta = _run(["gh", "api", f"repos/{slug}", "--jq", "[.permissions.push, .default_branch] | @tsv"], repo)
     can_push, _, base = meta.partition("\t")
+    if base_branch and base_branch != "HEAD" and subprocess.run(
+            ["gh", "api", f"repos/{slug}/branches/{base_branch}", "--silent"], cwd=repo, capture_output=True).returncode == 0:
+        base = base_branch  # the branch the fix was built on, so the PR contains only the fix
     if can_push.strip() == "true":
         remote, head = "origin", remote_branch
     else:
