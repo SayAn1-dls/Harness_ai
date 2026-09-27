@@ -1,40 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 348" width="900" height="348" role="img" aria-label="Scoreboard: 20 of 20 real tasks validated, reference fix 20 of 20, do-nothing model 0 of 20, live model not run yet, 91 tests passing">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 350" width="900" height="350" role="img" aria-label="Scoreboard: 20 of 20 real tasks validated, reference fix 20 of 20, do-nothing model 0 of 20, live model not run yet, 91 tests passing">
   <defs>
-    <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#818cf8"/></linearGradient>
     <style>
-      .t { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
-      .lbl { fill: #cbd5e1; font-size: 14px; font-weight: 600; }
-      .sub { fill: #64748b; font-size: 11.5px; }
-      .num { fill: #f1f5f9; font-size: 15px; font-weight: 800; }
-      .track { fill: #1e293b; }
+      .serif { font-family: "Tiempos Headline", Georgia, "Times New Roman", serif; }
+      .sans { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .lbl { fill: #141413; font-size: 15px; font-weight: 600; }
+      .sub { fill: #8A8778; font-size: 12px; }
+      .num { font-size: 22px; fill: #141413; }
+      .track { fill: #EAE5D9; }
       .q { animation: q 1.4s ease-in-out infinite; }
-      @keyframes q { 50% { opacity: .25; } }
+      @keyframes q { 50% { opacity: .3; } }
     </style>
   </defs>
-  <rect width="900" height="348" rx="18" fill="#0b1220"/>
-  <text x="32" y="44" class="t" font-size="20" font-weight="800" fill="#f1f5f9">Scoreboard</text>
-  <text x="32" y="68" class="t sub">real bug fixes from 6 open-source Python libraries · graded by their own hidden tests</text>
+  <rect width="900" height="350" rx="22" fill="#F5F1E8"/>
+  <rect x="1" y="1" width="898" height="348" rx="21" fill="none" stroke="#E3DED2"/>
+  <text x="36" y="52" class="serif" font-size="30" fill="#141413">The scoreboard</text>
+  <text x="36" y="76" class="sans sub">20 real bugs from 6 open-source Python libraries · graded by the maintainers' own tests</text>
 
-  <g class="t">
-    <text x="32" y="110" class="lbl">Benchmark is real</text><text x="32" y="126" class="sub">hidden test fails before the fix, passes after</text>
-    <rect x="330" y="98" width="460" height="22" rx="11" class="track"/>
-    <rect x="330" y="98" width="0" height="22" rx="11" fill="url(#g)"><animate attributeName="width" from="0" to="460" dur="1.6s" begin="0.2s" fill="freeze"/></rect>
-    <text x="810" y="115" class="num">20/20</text>
+  <g class="sans">
+    <text x="36" y="118" class="lbl">The benchmark is real</text><text x="36" y="136" class="sub">each test fails before the real fix, passes after</text>
+    <rect x="340" y="108" width="440" height="16" rx="8" class="track"/>
+    <rect x="340" y="108" width="0" height="16" rx="8" fill="#D97757"><animate attributeName="width" from="0" to="440" dur="1.6s" begin=".2s" fill="freeze"/></rect>
+    <text x="800" y="123" class="serif num">20/20</text>
 
-    <text x="32" y="168" class="lbl">Harness pipeline works</text><text x="32" y="184" class="sub">reference fix replayed through every stage</text>
-    <rect x="330" y="156" width="460" height="22" rx="11" class="track"/>
-    <rect x="330" y="156" width="0" height="22" rx="11" fill="url(#g)"><animate attributeName="width" from="0" to="460" dur="1.6s" begin="0.8s" fill="freeze"/></rect>
-    <text x="810" y="173" class="num">20/20</text>
+    <text x="36" y="178" class="lbl">The pipeline works</text><text x="36" y="196" class="sub">the real fix, fed through every stage</text>
+    <rect x="340" y="168" width="440" height="16" rx="8" class="track"/>
+    <rect x="340" y="168" width="0" height="16" rx="8" fill="#D97757"><animate attributeName="width" from="0" to="440" dur="1.6s" begin=".8s" fill="freeze"/></rect>
+    <text x="800" y="183" class="serif num">20/20</text>
 
-    <text x="32" y="226" class="lbl">Can't be gamed</text><text x="32" y="242" class="sub">a model that changes nothing</text>
-    <rect x="330" y="214" width="460" height="22" rx="11" class="track"/>
-    <rect x="330" y="214" width="6" height="22" rx="3" fill="#f87171"/>
-    <text x="810" y="231" class="num" fill="#fca5a5">0/20</text>
+    <text x="36" y="238" class="lbl">It can't be cheated</text><text x="36" y="256" class="sub">a model that changes nothing</text>
+    <rect x="340" y="228" width="440" height="16" rx="8" class="track"/>
+    <rect x="340" y="228" width="6" height="16" rx="3" fill="#B5473A"/>
+    <text x="800" y="243" class="serif num" fill="#B5473A">0/20</text>
 
-    <text x="32" y="284" class="lbl">DeepSeek / Qwen live</text><text x="32" y="300" class="sub">the real test of the model</text>
-    <rect x="330" y="272" width="460" height="22" rx="11" class="track" stroke="#f59e0b" stroke-dasharray="5 5"/>
-    <text x="560" y="288" text-anchor="middle" class="sub" fill="#fbbf24">waiting for an API key · make eval-real</text>
-    <text x="810" y="289" class="num q" fill="#fbbf24">?/20</text>
+    <text x="36" y="298" class="lbl">DeepSeek / Qwen, live</text><text x="36" y="316" class="sub">the model's real score</text>
+    <rect x="340" y="288" width="440" height="16" rx="8" fill="none" stroke="#C8963E" stroke-dasharray="5 5"/>
+    <text x="560" y="301" text-anchor="middle" class="sub" fill="#A87A2E">waiting for a funded API key · make eval-real</text>
+    <text x="800" y="303" class="serif num q" fill="#A87A2E">?/20</text>
   </g>
-  <text x="32" y="334" class="t sub">+ 91 automated tests · macOS + Linux container · CI on Python 3.11 / 3.12 / 3.13</text>
+  <text x="36" y="340" class="sans sub" font-size="11">+ 91 automated tests · green on Python 3.11 / 3.12 / 3.13 · also run in a clean Linux container</text>
 </svg>

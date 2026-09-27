@@ -1,52 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="The recovery loop: implement, verify, diagnose, update context, replan, and exit when verified or when a stop condition is hit">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 340" width="800" height="340" role="img" aria-label="The loop: implement, verify, diagnose, replan; exit to a verified patch, or stop early">
   <defs>
     <style>
-      .t { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
-      .box { fill: #111a2e; stroke: #334155; stroke-width: 1.5; }
-      .h { fill: #e2e8f0; font-size: 14px; font-weight: 700; }
-      .s { fill: #7c8ba1; font-size: 11px; }
-      .ring { fill: none; stroke: #1e293b; stroke-width: 3; }
-      .spin { fill: none; stroke: #818cf8; stroke-width: 3; stroke-dasharray: 6 12; animation: spin 2s linear infinite; }
-      @keyframes spin { to { stroke-dashoffset: -72; } }
+      .serif { font-family: "Tiempos Headline", Georgia, "Times New Roman", serif; }
+      .sans { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .card { fill: #FAF9F5; stroke: #E3DED2; stroke-width: 1.2; }
+      .h { fill: #141413; font-size: 16px; }
+      .s { fill: #8A8778; font-size: 11.5px; }
       .ok { animation: ok 6s ease-in-out infinite; }
-      @keyframes ok { 0%, 70% { opacity: .35; } 78%, 94% { opacity: 1; } 100% { opacity: .35; } }
+      @keyframes ok { 0%, 70% { opacity: .4; } 78%, 94% { opacity: 1; } 100% { opacity: .4; } }
     </style>
-    <path id="orbit" d="M300 60 A 130 110 0 1 1 299.9 60"/>
+    <path id="orbit" d="M300 64 A 140 110 0 1 1 299.9 64"/>
   </defs>
-  <rect width="760" height="330" rx="16" fill="#0b1220"/>
+  <rect width="800" height="340" rx="22" fill="#F5F1E8"/>
+  <rect x="1" y="1" width="798" height="338" rx="21" fill="none" stroke="#E3DED2"/>
+  <use href="#orbit" fill="none" stroke="#E3DED2" stroke-width="2" stroke-dasharray="3 7"/>
+  <circle r="8" fill="#D97757"><animateMotion dur="6s" repeatCount="indefinite"><mpath href="#orbit"/></animateMotion></circle>
 
-  <use href="#orbit" class="ring"/>
-  <use href="#orbit" class="spin"/>
-  <circle r="7" fill="#2dd4bf">
-    <animateMotion dur="6s" repeatCount="indefinite" rotate="auto"><mpath href="#orbit"/></animateMotion>
-  </circle>
-
-  <g class="t">
-    <rect x="236" y="36" width="128" height="48" rx="10" class="box"/>
-    <text x="300" y="58" text-anchor="middle" class="h">Implement</text><text x="300" y="74" text-anchor="middle" class="s">coder tool loop</text>
-
-    <rect x="366" y="146" width="128" height="48" rx="10" class="box"/>
-    <text x="430" y="168" text-anchor="middle" class="h">Verify</text><text x="430" y="184" text-anchor="middle" class="s">tests · lint · proof</text>
-
-    <rect x="236" y="256" width="128" height="48" rx="10" class="box"/>
-    <text x="300" y="278" text-anchor="middle" class="h">Diagnose</text><text x="300" y="294" text-anchor="middle" class="s">failure class</text>
-
-    <rect x="106" y="146" width="128" height="48" rx="10" class="box"/>
-    <text x="170" y="168" text-anchor="middle" class="h">Replan</text><text x="170" y="184" text-anchor="middle" class="s">new context + plan</text>
+  <g text-anchor="middle">
+    <rect x="232" y="40" width="136" height="50" rx="14" class="card"/>
+    <text x="300" y="62" class="serif h">Implement</text><text x="300" y="79" class="sans s">the model + 10 tools</text>
+    <rect x="372" y="150" width="136" height="50" rx="14" class="card"/>
+    <text x="440" y="172" class="serif h">Verify</text><text x="440" y="189" class="sans s">tests vs before · proof</text>
+    <rect x="232" y="260" width="136" height="50" rx="14" class="card"/>
+    <text x="300" y="282" class="serif h">Diagnose</text><text x="300" y="299" class="sans s">why did it fail?</text>
+    <rect x="92" y="150" width="136" height="50" rx="14" class="card"/>
+    <text x="160" y="172" class="serif h">Replan</text><text x="160" y="189" class="sans s">new context + plan</text>
   </g>
 
-  <g class="t">
-    <line x1="494" y1="170" x2="560" y2="170" stroke="#2dd4bf" stroke-width="2"/>
-    <path d="M560 164 L570 170 L560 176 Z" fill="#2dd4bf"/>
-    <g class="ok">
-      <rect x="574" y="140" width="160" height="60" rx="12" fill="#0f2a33" stroke="#2dd4bf"/>
-      <text x="654" y="166" text-anchor="middle" font-size="14" font-weight="700" fill="#5eead4">Verified patch</text>
-      <text x="654" y="184" text-anchor="middle" font-size="11" fill="#7dd3c8">committed on agent/*</text>
-    </g>
-    <text x="574" y="236" font-size="11.5" fill="#f59e0b">Stops early on:</text>
-    <text x="574" y="254" font-size="11" fill="#94a3b8">• same failure twice</text>
-    <text x="574" y="270" font-size="11" fill="#94a3b8">• iteration / token budget</text>
-    <text x="574" y="286" font-size="11" fill="#94a3b8">• falling score · unsafe action</text>
-    <text x="24" y="30" font-size="12" fill="#64748b">every attempt carries the previous diff, failure and diagnosis</text>
+  <line x1="508" y1="175" x2="572" y2="175" stroke="#D97757" stroke-width="2"/>
+  <path d="M572 169 L582 175 L572 181 Z" fill="#D97757"/>
+  <g class="ok" text-anchor="middle">
+    <rect x="588" y="146" width="180" height="58" rx="29" fill="#D97757"/>
+    <text x="678" y="171" class="serif" font-size="17" fill="#FAF9F5">Verified patch</text>
+    <text x="678" y="189" class="sans" font-size="11" fill="#FBE9E1">committed on agent/*</text>
   </g>
+  <g class="sans">
+    <text x="588" y="244" font-size="12.5" font-weight="600" fill="#A87A2E">…or it stops early:</text>
+    <text x="588" y="264" class="s">the same failure twice</text>
+    <text x="588" y="281" class="s">out of attempts or tokens</text>
+    <text x="588" y="298" class="s">each try breaks more tests</text>
+  </g>
+  <text x="28" y="30" class="sans s">every retry remembers the last diff, error and diagnosis</text>
 </svg>
