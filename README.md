@@ -4,7 +4,7 @@
 
 # LCC
 
-### We don't trust AI-written fixes. So we built something that makes the AI prove them.
+### An AI that fixes bugs has to prove the fix. That's the whole idea.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SayAn1-dls/Harness_ai/ci.yml?branch=agent/core-loop&style=flat-square&label=CI&labelColor=141413)](https://github.com/SayAn1-dls/Harness_ai/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20·%203.12%20·%203.13-D97757?style=flat-square&labelColor=141413)
@@ -17,24 +17,24 @@
 
 <img src="docs/assets/vs.svg" alt="A chatbot says fixed it and tests fail; LCC proves the fix before anyone sees it" width="100%"/>
 
-## The problem
+## Why we built this
 
-Every AI coding tool says "Fixed it!". Half the time it's right. The other half, a test you never looked at breaks, and you find out at 2am.
+Ask an AI to fix a bug and it will tell you it's fixed. Sometimes it is. Sometimes it broke three other things, and you only find out later.
 
-The model isn't the problem. The problem is that nobody makes it **show its work**.
+We don't think the model is the problem. Nobody checks its work, and that is.
 
 ## What LCC does
 
-LCC is a **harness**: the workbench around an AI model. You hand it a bug, or just a link to a GitHub repo, and it goes through the same steps a careful engineer would:
+LCC sits around an AI model and gives it a proper place to work. You give it a bug report, or only a link to a GitHub repo. It then works like a careful developer would:
 
-**Read the repo → find the code that matters → fix it → write a test that fails without the fix → run everything → try again if something's off → hand a human the result.**
+**reads the repo → finds the code that matters → fixes it → writes a test that fails without the fix → runs all the tests → tries again if something is wrong → gives the result to a person.**
 
-The rule that holds it all together:
+One rule decides everything:
 
-> **A fix doesn't count until a test fails before the change and passes after it.**
-> No test flip, no fix. We don't care how confident the model sounds.
+> **A fix only counts if a test fails before the change and passes after it.**
+> If the test doesn't flip, it isn't a fix, however sure the model sounds.
 
-And it never merges anything. You get a branch or a *draft* pull request. A human always has the last word.
+LCC never merges anything by itself. You get a branch or a *draft* pull request, and a person decides.
 
 ---
 
@@ -42,14 +42,14 @@ And it never merges anything. You get a branch or a *draft* pull request. A huma
 
 <img src="docs/assets/scoreboard.svg" alt="Scoreboard" width="100%"/>
 
-We didn't want to grade ourselves on toy examples we wrote, so we went digging through the git history of six real open-source Python libraries: **more-itertools, toolz, boltons, tabulate, sqlparse and parse**.
+Grading ourselves on bugs we wrote ourselves felt like cheating. So we went through the git history of six open-source Python libraries: **more-itertools, toolz, boltons, tabulate, sqlparse and parse**.
 
-- We pulled out **101** real bug-fix commits. **63** survived our checks: the maintainers' own test has to fail on the code before the fix and pass after it. We picked **20** clear bugs from those.
-- To test the harness itself, we fed it the real fix: it went through every stage and scored **20/20**.
-- To test the grader, we plugged in a model that does nothing: it scored **0/20**. You can't pass by sitting still.
-- **The live score is missing.** Our DeepSeek account ran out of credit (HTTP 402) and our Gemini project was blocked (HTTP 403) before we got a real run in. With a funded DeepSeek or Qwen key it's one command: `make eval-real`. Until then, we are not going to invent a number.
+- We collected **101** real bug-fix commits. **63** passed our check, which means the maintainers' own test fails on the code before their fix and passes after it. We picked **20** clear bugs from those.
+- To check the harness, we gave it the maintainers' real fix. It went through every step and got **20/20**.
+- To check the grading, we used a model that does nothing. It got **0/20**, so there's no passing by doing nothing.
+- **There's no live score yet.** Our DeepSeek account ran out of credit (HTTP 402), and our Gemini project was blocked (HTTP 403), before we could run it. With a working DeepSeek or Qwen key it's one command, `make eval-real`. We won't put a number here until we have one.
 
-Behind all of that: **100 automated tests**, run on every push on Python 3.11, 3.12 and 3.13 (green ✅), plus the same checks inside a clean Linux container.
+On top of that there are **100 automated tests**. They run on every push, on Python 3.11, 3.12 and 3.13 (currently green ✅), and we've also run them in a clean Linux container.
 
 ---
 
@@ -57,14 +57,14 @@ Behind all of that: **100 automated tests**, run on every push on Python 3.11, 3
 
 ```bash
 git clone https://github.com/SayAn1-dls/Harness_ai.git && cd Harness_ai
-export AI_API_KEY="your DeepSeek or Qwen key"    # the only secret. never written to disk.
+export AI_API_KEY="your DeepSeek or Qwen key"    # the only secret it needs. never saved to a file.
 make setup
-make doctor     # sends ONE tiny request: is the key real? any balance left? does the model exist?
+make doctor     # one tiny request: does the key work, is there balance, does the model exist?
 make run        # paste a bug report, a GitHub issue link, or just a repo link
 ```
 
 <img src="docs/assets/terminal.svg" alt="What a run looks like" width="100%"/>
-<sub>That's an illustration of the output, not a recording.</sub>
+<sub>This shows what the output looks like. It is not a recording of a real run.</sub>
 
 ---
 
@@ -72,22 +72,22 @@ make run        # paste a bug report, a GitHub issue link, or just a repo link
 
 <img src="docs/assets/loop.svg" alt="Implement, verify, diagnose, replan" width="100%"/>
 
-**It reads the bug report first**, and turns "add is broken" into something testable, like "`add(2, 3)` must return 5". If a report makes no sense at all, it asks a human instead of guessing.
+**First it reads the bug report.** "add is broken" becomes something you can test, like "`add(2, 3)` should return 5". If the report makes no sense, it asks a person instead of guessing.
 
-**Then it learns the repo.** It indexes every file, works out which file imports which, and ranks them by how much they have to do with the bug. The model starts with the right code in front of it, not the whole repo.
+**Then it learns the repo.** It goes through every file, works out which files import which, and ranks them by how closely they relate to the bug. The model starts with the right code in front of it, not the whole repo.
 
-**Then the model goes to work** with 10 tools: search, find where something is defined, list files, read specific lines, edit, create a file, run tests, run a shell command, look at git history, and "I'm done".
+**Then the model fixes it** with 10 tools: search, find where something is defined, list files, read specific lines, edit, create a file, run tests, run a shell command, look at git history, and say it's done.
 
-**Then we check it**, and this part is where most tools stop and we don't. We run the tests from *before* the change and compare. Tests that were already broken don't count against the fix. Anything newly broken does. The new test has to fail on the old code, or it proves nothing.
+**Then LCC checks the fix.** Most tools stop at "the tests pass". LCC compares against the test results from *before* the change. Tests that were already failing don't count against the fix. Anything that newly fails does. And the new test has to fail on the old code, or it doesn't prove anything.
 
-**If it fails, it tries again, knowing why.** The next attempt sees the diff, the error and a diagnosis. And it knows when to quit: the same failure twice, the budget spent, or every attempt breaking more tests. Burning tokens on a lost cause is not a strategy.
+**If the fix fails, it tries again.** The next attempt gets the diff, the error and a short diagnosis. It also knows when to give up: the same failure twice, no budget left, or more tests failing with every attempt. There's no point spending tokens on a fix that isn't getting closer.
 
 ---
 
-## Three things no other harness we know of does
+## Three things we haven't seen in other tools
 
-### 1. Every fix carries its own proof
-When LCC verifies a fix, it writes a small proof file with the commit before the fix, the commit with it, and the exact tests that have to flip. Anyone can replay it:
+### 1. Every fix comes with proof you can check
+When LCC accepts a fix, it saves a small proof file. It holds the commit before the fix, the commit with the fix, and the tests that have to flip. Anyone can run it again:
 
 ```bash
 make verify PROOF=outputs/GH-12.proof.json REPO=path/to/repo
@@ -96,17 +96,17 @@ make verify PROOF=outputs/GH-12.proof.json REPO=path/to/repo
 #  PROOF HOLDS
 ```
 
-Every pull request LCC opens ends with a **"Verify it yourself"** section: four plain `git` and `pytest` commands. You don't have to install anything, and you don't have to trust the AI.
+Each pull request also ends with a **"Verify it yourself"** section: four normal `git` and `pytest` commands. A maintainer can check the fix without installing LCC or trusting the AI.
 
-### 2. It tests the test
-A test that fails before a fix and passes after it can still be lazy, like `assert result != 5`. So after verifying a fix, LCC **breaks the fixed lines on purpose**, one small change at a time: it flips `<` to `<=`, turns `and` into `or`, returns `None`, deletes a `raise`. Then it checks whether the new test notices. It never touches text inside strings or comments, because nobody could catch those changes.
+### 2. It checks the test too
+A test can fail before a fix and pass after it and still be weak, like `assert result != 5`. So once a fix passes, LCC **breaks the fixed lines on purpose**, one small change at a time. It turns `<` into `<=`, `and` into `or`, makes a function return `None`, or removes a `raise`. Then it checks whether the new test catches it. It leaves text inside strings and comments alone, because no test could notice a change there.
 
-The PR states the result: *"the new test catches 4/6 deliberate breaks of this fix."* With `LCC_MUTATION=gate`, a test that catches none of them gets sent back to be strengthened.
+The pull request shows the result, for example *"the new test catches 4 of 6 deliberate breaks"*. With `LCC_MUTATION=gate`, a test that catches none of them gets sent back to be made stronger.
 
-We ran it on the maintainers' own tests for our 20 real bugs: they catch **24 of 29** deliberate breaks. One that slips through: more-itertools checks that `sliced()` rejects `-1`, but never checks `0`.
+We tried it on the maintainers' own tests for our 20 real bugs. They caught **24 of 29** of our deliberate breaks. One that got through: more-itertools tests that `sliced()` rejects `-1`, but never tests `0`.
 
-### 3. It keeps score of how often the AI was right
-In auto mode the model gets to claim bugs, and LCC counts what happens to every claim:
+### 3. It counts how often the AI was right
+In auto mode the model reports bugs, and LCC keeps track of what happens to each one:
 
 ```
 The model claimed 7 bug(s).
@@ -115,60 +115,63 @@ The model claimed 7 bug(s).
 Proven rate: 2/4 attempted claims (2/7 of everything it claimed).
 ```
 
-The numbers above are an example of the format. The live numbers come from your run. We think "how often was the AI's bug claim real?" is a number every AI code tool should show, so ours does.
+These numbers only show what the report looks like; your own run gives the real ones. We think any AI code tool should tell you how often its bug reports were real, so ours does.
 
 ---
 
-## Just a repo link? Auto mode
+## Only have a repo link? Auto mode
 
 ```bash
 make auto REPO=https://github.com/someone/their-project
 ```
 
-No bug report at all. One command, and it does the whole job:
+You don't need a bug report. One command does all of this:
 
-1. **Reads the whole repo.** It runs the full test suite and a defect checker over every file. Then the AI reads *every* source file, most important first, within a budget you set (about 30k tokens by default; big files are split, never skipped). The report tells you exactly how much was read: *"The AI read 12 of 14 source files (2,300 of 2,710 lines)."*
-2. **Tells you everything it found.** You get `outputs/ISSUES-<repo>.md` with every bug, security hole and slow spot: where it is, who found it (tests, the checker, or the AI), and what happened to it. Each one is fixed with proof and a PR link, attempted but not provable, found but not attempted, or dropped with the reason.
-3. **Fixes the bugs,** but only with a test that fails before the fix and passes after it. **If a bug can't be proven, it's dropped**, so the AI can't make up bugs and send them to strangers.
-4. **Optimizes slow code, and proves it's faster.** For a slow spot, the model writes a small benchmark. LCC times it on the old code and the new code (median of 7 runs) and accepts the change only if **every test still passes** and it's **at least 1.1× faster**. The PR says it straight: *"12.4 ms → 3.1 ms (4.0× faster)"*. We tested it on an O(n²) duplicate check, which came out more than 5× faster, and on a fake "optimization" that changed nothing, which was rejected.
+1. **Reads the whole repo.** It runs the full test suite and a defect checker over every file. Then the AI reads every source file, most important first, up to a budget you choose (about 30k tokens by default). Big files are split into parts, not skipped. The report says how much was read, for example *"The AI read 12 of 14 source files (2,300 of 2,710 lines)."*
+2. **Lists every issue it found** in `outputs/ISSUES-<repo>.md`: bugs, security problems and slow code. For each one you see where it is, what found it (the tests, the checker or the AI), and what happened to it: fixed with proof and a PR link, tried but not proven, found but not tried, or dropped with the reason.
+3. **Fixes the bugs,** but only with a test that fails before the fix and passes after it. **If a bug can't be proven, it's dropped.** The AI can't invent a bug and send it to someone.
+4. **Speeds up slow code, and shows the numbers.** For slow code, the model writes a small benchmark. LCC times it on the old code and the new code (the middle of 7 runs) and keeps the change only if **every test still passes** and it's **at least 1.1× faster**. The pull request gives the numbers, like *"12.4 ms → 3.1 ms (4.0× faster)"*. We tried it on a slow O(n²) duplicate check: the new version was more than 5× faster and was kept. A fake "speed-up" that changed nothing was rejected.
 
-What survives becomes a **draft** pull request on your fork. It asks before touching a repo you don't own, stops after 3 open PRs, and runs the stranger's code inside Docker when Docker is running. Maintainers decide what gets merged. Always.
+Everything that passes becomes a **draft** pull request from your fork. LCC asks before touching a repo you don't own, stops at 3 open pull requests, and runs other people's code inside Docker if Docker is running. The maintainers decide what gets merged.
 
 ---
 
-## How we got here (including the embarrassing parts)
+## How we got here (mistakes included)
 
 <img src="docs/assets/journey.svg" alt="Project journey" width="100%"/>
 
-**Our first benchmark lied to us.** It said 4 bugs were fixed. The model had changed *nothing*: those tests were already passing. That's where the "test must flip from fail to pass" rule comes from, and it's still the most important line in the codebase.
+**Our first benchmark was wrong.** It said 4 bugs were fixed, but the model hadn't changed anything: those tests were already passing. That's where the "the test must go from failing to passing" rule came from, and it's still the most important check in the code.
 
-**Then we attacked our own code** and found 12 real bugs. Two favourites:
-- One unrelated old lint error in a repo made *every* correct fix fail. We wasted 22 model calls on something that now takes 5.
-- A model answered `"none"`, and our code split it into `n`, `o`, `n`, `e`: four "blocking questions". A perfectly solvable task got escalated to a human. Every one of those 12 bugs now has a test, so it can't come back.
+**Then we went looking for bugs in our own code** and found 12. Two of them:
+- One old, unrelated lint error in a repo made every correct fix fail. We lost 22 model calls to it. It takes 5 now.
+- A model answered `"none"`, and our code split it into `n`, `o`, `n`, `e`: four "blocking questions". A task that could easily have been solved got sent to a person. All 12 bugs now have tests, so they can't come back.
 
 **We made it safe to run on other people's code.**
 - The target project's code never sees your API keys.
-- A git guard stops it from resetting or pushing your repo, even when the call comes from inside Python.
-- Docker mode takes away the network and your files too.
+- A git guard stops it from resetting or pushing your repo, even when the command comes from inside Python.
+- In Docker mode it also loses network access and can't see your files.
 
-We tested all of it: inside the container the key is gone, your home folder is invisible, and the internet is unreachable.
+We tested each of these. Inside the container the key isn't there, your home folder isn't visible, and the internet can't be reached.
 
-**We made it cheaper.** On the same 16-step session, prompts went from about 120.8k to about 96.5k tokens (**−20%**). Three changes did it:
-- a file read that gets read again drops out of the conversation;
-- a passing test run shows as one line instead of a wall of output;
+**We made it cheaper.** On the same 16-step session, prompts went from about 120.8k tokens to about 96.5k (**−20%**). Three changes did most of it:
+- when a file is read again, the older copy drops out of the conversation;
+- a passing test run is one line instead of a page of output;
 - the tool descriptions got shorter.
 
-**We made it fit the hackathon.** The final evaluation runs on DeepSeek and Qwen, so it detects either key without spending a token. It finds a model your account actually has, and adapts to local servers that can't do tool calls at all.
+**We added proof on top of proof.** Fixes carry a proof file and "Verify it yourself" steps. Tests get checked by breaking the fix on purpose. Auto mode counts how often the AI's bug reports were real, and speed-ups have to be measured before they're kept.
+
+**We fitted it to the hackathon.** The final evaluation uses DeepSeek and Qwen, so LCC recognises either key without spending a token. It picks a model your account actually has, and it works with local servers that don't support tool calls.
 
 ---
 
-## What's still missing (we'd rather you hear it from us)
+## What's still missing
 
-- **A live score from DeepSeek or Qwen.** Everything above proves the harness works. It doesn't yet prove how often the model fixes the bug.
-- **Proof that every helper step pays off.** The planner, reviewer and intake calls might not be worth their tokens. `make ablation` switches each one off and measures it. It needs a key too.
-- **Other languages get less help.** Python gets the most; JavaScript, Go and Rust tests run but get less help.
-- **The token numbers are estimates.** They come from scripted runs. Live runs log what the provider actually bills.
-- **20 bugs is a small benchmark.** And some of these fixes are public, so a model might have seen them during training.
+- **A live score from DeepSeek or Qwen.** Everything above shows the harness works. It doesn't yet show how often a real model fixes the bug.
+- **A real run of auto mode.** Finding, fixing, speeding up and opening pull requests all work in our tests, against a copy of GitHub we set up locally. It hasn't run on real GitHub with a real model yet.
+- **Proof that every step is worth it.** The planner, reviewer and intake steps might cost more tokens than they save. `make ablation` turns each one off and compares. It also needs a key.
+- **Less help outside Python.** Python gets the most support. JavaScript, Go and Rust tests run, but get less help.
+- **Token numbers are estimates.** They come from scripted runs. Live runs record what the provider actually charges.
+- **20 bugs is a small benchmark.** These fixes are public, so a model may have seen some of them before.
 
 ---
 
@@ -177,49 +180,56 @@ We tested all of it: inside the container the key is gone, your home folder is i
 
 | Command | What it does |
 |---|---|
-| `make run ISSUE=<link or text> REPO=<path or url> [BASE=<commit>]` | Fix one bug without the interactive prompt |
-| `make auto REPO=<url> [PR=0\|1]` | Hunt → fix → prove → draft PRs (`PR=0` keeps everything local) |
+| `make run ISSUE=<link or text> REPO=<path or url> [BASE=<commit>]` | Fix one bug without the prompts |
+| `make auto REPO=<url> [PR=0\|1]` | Read the repo → list issues → fix and speed up with proof → draft PRs (`PR=0` keeps everything local) |
+| `make verify PROOF=outputs/<task>.proof.json REPO=<repo>` | Replay a fix's proof: the test fails on the old code and passes with the fix |
 | `make eval-real` | Live score on the 20 real bugs |
-| `make ablation` | The same, with planner, reviewer and intake switched off one at a time |
-| `make bench-check` | Re-prove the benchmark: 20/20 valid, 20/20 with the real fix, 0/20 doing nothing |
-| `make verify PROOF=outputs/<task>.proof.json` | Replay a fix's proof: its test fails on the original code, passes with the fix |
-| `make test` | 100 tests + a small offline benchmark, no key needed |
-| `make doctor` · `make clean` | Health check · tidy up |
+| `make ablation` | Same, with planner, reviewer and intake turned off one at a time |
+| `make bench-check` | Check the benchmark again: 20/20 valid, 20/20 with the real fix, 0/20 doing nothing |
+| `make test` | 100 tests plus a small offline benchmark, no key needed |
+| `make doctor` · `make clean` | Health check · clean up |
 </details>
 
 <details>
 <summary><b>Models and settings</b></summary>
 
-- **DeepSeek:** `deepseek-chat`, falling back to `deepseek-reasoner`.
+- **DeepSeek:** `deepseek-chat`, then `deepseek-reasoner` if the first isn't available.
 - **Qwen (Alibaba DashScope, international or China):** `qwen3-coder-plus`, then `qwen-plus`, then `qwen-max`.
-- **Your own model:** `LCC_BASE_URL=http://localhost:8000/v1 LCC_MODEL=<name>`. It works even without tool-call support.
-- A plain `sk-` key is only ever shown to DeepSeek and DashScope.
-- Everything is in `lcc.config.toml`, and can be overridden with `LCC_MODEL`, `LCC_PROVIDER`, `LCC_SANDBOX=docker` or `LCC_ABLATE=planner,reviewer`.
-- Per-bug budget: 5 attempts, 300k tokens and 30 tool steps.
+- **Your own model:** `LCC_BASE_URL=http://localhost:8000/v1 LCC_MODEL=<name>`. It works even if the server has no tool-call support.
+- A plain `sk-` key is only ever sent to DeepSeek and DashScope.
+- Settings live in `lcc.config.toml`. The main ones:
+  - per bug: 5 attempts, 300k tokens and 30 tool steps;
+  - `audit_budget_chars` sets how much the AI reads in auto mode;
+  - `min_speedup` (1.1) is the speed-up a change needs to be kept;
+  - `LCC_MUTATION=gate` sends weak tests back;
+  - `LCC_SANDBOX=docker` for full isolation;
+  - `LCC_MODEL` and `LCC_PROVIDER` pick the model.
 </details>
 
 <details>
 <summary><b>Rules it never breaks</b></summary>
 
 - It only works on `agent/*` branches, and it never merges.
-- Your unsaved changes are put aside before a run and put back after it.
-- The target's code runs without your keys, and can't reset, commit to or push your repo.
-- In Docker mode, the target's code gets no network and sees only its own folder.
-- Your key comes from `AI_API_KEY` only, and it's never written anywhere.
+- Your unsaved changes are set aside before a run and put back afterwards.
+- The target's code runs without your keys, and it can't reset, commit to or push your repo.
+- In Docker mode the target's code has no network and only sees its own folder.
+- Your key is read from `AI_API_KEY` only, and it's never written to a file.
+- Benchmarks and scratch files (`.lcc/`) never end up in a fix.
 </details>
 
 <details>
 <summary><b>Where things live</b></summary>
 
 `src/lcc/`:
-- `session.py`: `make run` / `make auto`
-- `orchestrator.py`: the brain
+- `session.py`: `make run` and `make auto`, plus the issue report
+- `orchestrator.py`: the steps, the checks and the retries
 - `agents.py`: the prompts
-- `agent_loop.py` + `tools.py`: the hands
-- `sandbox.py`: keys, git guard, Docker
-- `model.py`: DeepSeek and Qwen
+- `agent_loop.py` + `tools.py`: the tools the model uses
+- `proof.py`: proof files, `lcc verify` and the test checking
+- `sandbox.py`: key removal, git guard, Docker
+- `model.py`: DeepSeek, Qwen and local models
+- `discover.py`: finding bugs in auto mode
 - `bench.py`: the benchmark
-- `discover.py`: bug hunting
 
 Elsewhere:
 - `benchmarks/real/`: the 20 real bugs
@@ -230,7 +240,7 @@ Elsewhere:
 <br/>
 <div align="center">
 
-**We didn't build a smarter model. We built a stricter boss for it.**
+**We didn't make the model smarter. We made it prove what it does.**
 
 <sub>AI Harness Hackathon 2026</sub>
 
