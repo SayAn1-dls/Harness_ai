@@ -255,6 +255,39 @@ def doctor() -> None:
     raise typer.Exit(0 if ok else 1)
 
 
+@app.command()
+def verify(
+    repo: Path = typer.Option(Path("."), "--repo", help="Git repository that contains both commits"),
+    proof: Path = typer.Option(None, "--proof", help="A proof file written by the harness (outputs/<task>.proof.json)"),
+    base: str = typer.Option(None, "--base", help="Commit before the fix"),
+    head: str = typer.Option(None, "--head", help="Commit or branch with the fix"),
+    tests: str = typer.Option(None, "--tests", help="Comma-separated test files or ids (default: tests the fix changed)"),
+) -> None:
+    """Replay a fix's proof: its tests must FAIL on the original code and PASS with the fix. Changes nothing."""
+    from lcc.proof import verify as run_verify
+
+    targets = [t for t in (tests or "").split(",") if t.strip()] or None
+    if proof:
+        data = json.loads(proof.read_text(encoding="utf-8"))
+        base, head = base or data["base"], head or data["head"]
+        targets = targets or data.get("targets") or None
+    if not base or not head:
+        raise typer.BadParameter("give --proof, or --base and --head")
+    res = run_verify(repo, base, head, targets)
+    if "reason" in res:
+        console.print(f"[red]cannot verify:[/] {res['reason']}")
+        raise typer.Exit(1)
+    console.print(f"targets: {', '.join(res['targets'])}")
+    console.print(("[green]✓[/]" if res["fails_on_base"] else "[red]✗[/]") + f" on the original code ({base[:10]}) the tests "
+                  + ("FAIL: the bug is real" if res["fails_on_base"] else "already pass: this proves nothing"))
+    console.print(("[green]✓[/]" if res["passes_on_head"] else "[red]✗[/]") + f" with the fix ({head[:10]}) the tests "
+                  + ("PASS" if res["passes_on_head"] else "still FAIL"))
+    console.print("[bold green]PROOF HOLDS[/]" if res["valid"] else "[bold red]PROOF DOES NOT HOLD[/]")
+    if not res["valid"]:
+        console.print(res["head_output"][-800:] if res["fails_on_base"] else res["base_output"][-800:])
+    raise typer.Exit(0 if res["valid"] else 1)
+
+
 @app.command("dump-state")
 def dump_state(workspace: Path = typer.Option(Path("."), "--workspace")) -> None:
     store = _store(workspace)

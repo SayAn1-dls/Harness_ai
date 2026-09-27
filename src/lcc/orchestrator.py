@@ -60,7 +60,11 @@ class Orchestrator:
         self.test_timeout = test_timeout
         from lcc.config import load_config
 
-        self.ablate = set(load_config().run.ablate)  # e.g. {"planner", "reviewer", "intake"}
+        run_cfg = load_config().run
+        self.ablate = set(run_cfg.ablate)  # e.g. {"planner", "reviewer", "intake"}
+        self.mutation_mode, self.mutation_limit = run_cfg.mutation, run_cfg.mutation_limit
+        self.last_proof: dict = {}
+        self.weak_test_retries = 0
         self.index = None
         self.snapshot = None
         self.rules = []
@@ -135,6 +139,14 @@ class Orchestrator:
             if passed:
                 transition(task, TaskStatus.VERIFIED)
                 sha = Workspace(Path(task.workspace)).commit(f"lcc({task.task_id}): {task.objective[:60]}")
+                if self.last_proof.get("kind"):
+                    from lcc.proof import make_proof
+
+                    record = make_proof(task.base_commit, sha, self.last_proof.get("targets") or [],
+                                        self.last_proof["kind"], self.last_proof["level"],
+                                        task.verification.get("mutation"))
+                    task.verification["proof"] = record
+                    self.store.write_json("proof.json", record)
                 task.stop_reason = StopCondition.VERIFIED_SUCCESS.value
                 self.store.emit(task, "TASK_VERIFIED", result="success", commit=sha, score=task.global_score)
                 if until_human:
@@ -290,6 +302,16 @@ class Orchestrator:
         proof = self._prove_fix(task, tools, test_res) if ok else None
         if proof and not proof["ok"]:
             ok = False
+        mutation = self._test_strength(task, proof) if ok and proof else None
+        if mutation and self.mutation_mode == "gate" and mutation["total"] >= 3 and mutation["killed"] == 0 \
+                and self.weak_test_retries < 1 and task.iteration < task.budget.max_iterations:
+            self.weak_test_retries += 1
+            ok = False
+            proof = dict(proof, message=proof["message"] + (
+                f"\n[harness] Weak test: it still passes after each of {mutation['total']} deliberate breaks of your fix "
+                f"({', '.join(s['op'] + ' at ' + s['file'] + ':' + str(s['line']) for s in mutation['survived'][:4])}). "
+                "Assert the exact expected values so a wrong implementation fails."))
+        self.last_proof = proof or {}
         evidence = [
             f"tests: rc={test_res.get('returncode')} run={test_res.get('tests_run')} failed={test_res.get('tests_failed')}",
             f"lint: ok={lint_res.get('ok')} skipped={bool(lint_res.get('skipped'))}",
@@ -315,6 +337,7 @@ class Orchestrator:
             "tests_failed": test_res.get("tests_failed"),
             "lint_ok": lint_ok,
             "proof_level": proof["level"] if proof else 0,
+            "mutation": mutation or {},
         }
         self.store.write_json(f"verification_{task.iteration}.json", self.last_verification)
         self.store.emit(task, "AGENT_COMPLETED", agent="verifier", result="success" if ok else "fail",
@@ -399,22 +422,23 @@ class Orchestrator:
             return {"ok": False, "level": 0, "message": "[harness] No files were changed; there is nothing to verify."}
         before = set(task.baseline.get("failed_ids") or [])
         still = set((now or {}).get("failed_ids") or [])
+        tests = [f for f in changed if _is_test(f)]
+        sources = [f for f in changed if f not in tests]
         if before and before - still:
             fixed = sorted(before - still)
-            return {"ok": True, "level": 5, "message": f"[harness] fail-to-pass: {fixed[:10]} failed before the change and pass now."}
+            return {"ok": True, "level": 5, "kind": "baseline_fixed", "targets": fixed, "sources": sources,
+                    "message": f"[harness] fail-to-pass: {fixed[:10]} failed before the change and pass now."}
         if task.baseline.get("tests_failed") and not before and (now or {}).get("ok"):
-            return {"ok": True, "level": 5,
+            return {"ok": True, "level": 5, "kind": "baseline_fixed", "targets": tests, "sources": sources,
                     "message": f"[harness] fail-to-pass: {task.baseline['tests_failed']} test(s) failed before the change; the suite now passes."}
-        tests = [f for f in changed if _is_test(f)]
         if task.kind == "optimize" and (now or {}).get("tests_run") and not tests:
-            return {"ok": True, "level": 3, "message": (
+            return {"ok": True, "level": 3, "kind": "behavior_preserved", "targets": [], "sources": sources, "message": (
                 f"[harness] behavior preserved: {now['tests_run']} existing test(s) pass with no regressions "
                 "(optimization; no behavior change to flip a test).")}
         if not tests:
             return {"ok": False, "level": 1, "message": (
                 "[harness] The tests that pass now also passed before your change, so they prove nothing about "
                 "this issue. Add or update a test that fails without your fix and passes with it.")}
-        sources = [f for f in changed if f not in tests]
         with base_sources(root, sources):
             if all(t.endswith(".py") for t in tests):
                 base_results = {t: tools.run_test(target=t) for t in tests}
@@ -422,11 +446,27 @@ class Orchestrator:
                 base_results = {"suite": tools.run_test()}
         failing_on_base = [t for t, r in base_results.items() if not r["ok"]]
         if failing_on_base:
-            return {"ok": True, "level": 5,
+            targets = tests if failing_on_base == ["suite"] else failing_on_base
+            return {"ok": True, "level": 5, "kind": "new_tests", "targets": targets, "sources": sources,
                     "message": f"[harness] fail-to-pass: {failing_on_base} fail on the base code and pass with the change."}
         return {"ok": False, "level": 1, "message": (
             f"[harness] Your new/updated tests {tests} also pass WITHOUT your source change, so they do not "
             "demonstrate the fix. Make the test exercise the reported behavior.")}
+
+    def _test_strength(self, task: TaskState, proof: dict) -> dict | None:
+        """Break the fix's added lines on purpose; the fix's tests should notice. No model call."""
+        if self.mutation_mode == "off" or proof.get("level") != 5 or not proof.get("targets"):
+            return None
+        targets = [t for t in proof["targets"] if t.split("::")[0].endswith(".py")]
+        if not targets or not any(s.endswith(".py") for s in proof.get("sources") or []):
+            return None
+        from lcc.proof import mutation_check
+
+        result = mutation_check(Path(task.workspace), targets, proof["sources"], limit=self.mutation_limit)
+        if result["total"]:
+            self.store.emit(task, "TEST_STRENGTH", agent="verifier", result=f"{result['killed']}/{result['total']}",
+                            score=result["score"], survived=[f"{s['op']} @ {s['file']}:{s['line']}" for s in result["survived"]])
+        return result
 
     def _review(self, task: TaskState) -> None:
         transition(task, TaskStatus.REVIEWING)

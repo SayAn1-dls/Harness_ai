@@ -208,6 +208,8 @@ def run_one(meta: dict[str, Any], provider_name: str, max_iterations: int, workd
         "check_output": "" if check_ok else check_out[-800:],
         "error": error,
         "fatal": fatal,
+        "test_strength": {k: (task.verification.get("mutation") or {}).get(k) for k in ("killed", "total")},
+        "proof_kind": (task.verification.get("proof") or {}).get("kind"),
     }
 
 

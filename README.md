@@ -49,7 +49,7 @@ We didn't want to grade ourselves on toy examples we wrote, so we went digging t
 - To test the grader, we plugged in a model that does nothing: it scored **0/20**. You can't pass by sitting still.
 - **The live score is missing.** Our DeepSeek account ran out of credit (HTTP 402) and our Gemini project was blocked (HTTP 403) before we got a real run in. With a funded DeepSeek or Qwen key it's one command: `make eval-real`. Until then, we are not going to invent a number.
 
-Behind all of that: **91 automated tests**, run on every push on Python 3.11, 3.12 and 3.13 (green ✅), plus the same checks inside a clean Linux container.
+Behind all of that: **97 automated tests**, run on every push on Python 3.11, 3.12 and 3.13 (green ✅), plus the same checks inside a clean Linux container.
 
 ---
 
@@ -81,6 +81,41 @@ make run        # paste a bug report, a GitHub issue link, or just a repo link
 **Then we check it**, and this part is where most tools stop and we don't. We run the tests from *before* the change and compare. Tests that were already broken don't count against the fix. Anything newly broken does. The new test has to fail on the old code, or it proves nothing.
 
 **If it fails, it tries again, knowing why.** The next attempt sees the diff, the error and a diagnosis. And it knows when to quit: the same failure twice, the budget spent, or every attempt breaking more tests. Burning tokens on a lost cause is not a strategy.
+
+---
+
+## Three things no other harness we know of does
+
+### 1. Every fix carries its own proof
+When LCC verifies a fix, it writes a small proof file with the commit before the fix, the commit with it, and the exact tests that have to flip. Anyone can replay it:
+
+```bash
+make verify PROOF=outputs/GH-12.proof.json REPO=path/to/repo
+#  ✓ on the original code the tests FAIL: the bug is real
+#  ✓ with the fix the tests PASS
+#  PROOF HOLDS
+```
+
+Every pull request LCC opens ends with a **"Verify it yourself"** section: four plain `git` and `pytest` commands. You don't have to install anything, and you don't have to trust the AI.
+
+### 2. It tests the test
+A test that fails before a fix and passes after it can still be lazy, like `assert result != 5`. So after verifying a fix, LCC **breaks the fixed lines on purpose**, one small change at a time: it flips `<` to `<=`, turns `and` into `or`, returns `None`, deletes a `raise`. Then it checks whether the new test notices. It never touches text inside strings or comments, because nobody could catch those changes.
+
+The PR states the result: *"the new test catches 4/6 deliberate breaks of this fix."* With `LCC_MUTATION=gate`, a test that catches none of them gets sent back to be strengthened.
+
+We ran it on the maintainers' own tests for our 20 real bugs: they catch **24 of 29** deliberate breaks. One that slips through: more-itertools checks that `sliced()` rejects `-1`, but never checks `0`.
+
+### 3. It keeps score of how often the AI was right
+In auto mode the model gets to claim bugs, and LCC counts what happens to every claim:
+
+```
+The model claimed 7 bug(s).
+  3 dropped before any work: 2 had no way to trigger them, 1 low confidence, 0 in files it never read.
+  4 attempted: 2 proven real with a failing test, 2 could not be proven.
+Proven rate: 2/4 attempted claims (2/7 of everything it claimed).
+```
+
+The numbers above are an example of the format. The live numbers come from your run. We think "how often was the AI's bug claim real?" is a number every AI code tool should show, so ours does.
 
 ---
 
@@ -147,7 +182,8 @@ We tested all of it: inside the container the key is gone, your home folder is i
 | `make eval-real` | Live score on the 20 real bugs |
 | `make ablation` | The same, with planner, reviewer and intake switched off one at a time |
 | `make bench-check` | Re-prove the benchmark: 20/20 valid, 20/20 with the real fix, 0/20 doing nothing |
-| `make test` | 91 tests + a small offline benchmark, no key needed |
+| `make verify PROOF=outputs/<task>.proof.json` | Replay a fix's proof: its test fails on the original code, passes with the fix |
+| `make test` | 97 tests + a small offline benchmark, no key needed |
 | `make doctor` · `make clean` | Health check · tidy up |
 </details>
 

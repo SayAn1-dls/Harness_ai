@@ -108,12 +108,15 @@ def test_auto_mode_finds_fixes_and_opens_prs(tmp_path, monkeypatch):
     out = auto_fix("https://github.com/acme/demo", cfg, provider, Console(quiet=True), explicit_pr=True)
 
     assert out["candidates"] == 2 and out["fixed"] == 2, json.dumps(out["results"], indent=1)
+    h = out["ai_honesty"]  # the model claimed 2 bugs: one had no trigger, the other was proven with a test
+    assert (h["claimed"], h["dropped_no_trigger"], h["attempted"], h["proven"], h["rate"]) == (2, 1, 1, 1, 1.0)
     assert out["prs"] == ["https://github.com/acme/demo/pull/1", "https://github.com/acme/demo/pull/2"]
     calls = gh_log.read_text()
     assert not any(line.startswith("pr merge") for line in calls.splitlines())
     create = [line for line in calls.splitlines() if line.startswith("pr create")]
     assert "--repo acme/demo --base main --head bot:lcc/auto-1-mean-divides-by-n-1" in create[0]
     assert calls.count("--draft") == 2  # maintainers see drafts first
+    assert calls.count("Verify it yourself") == 2 and "expected: FAIL (the bug is real)" in calls  # proof-carrying PRs
     assert "## Verification" in create[0] or "Verification" in calls
     fork_branches = subprocess.run(["git", "branch", "--list"], cwd=fork, text=True, capture_output=True).stdout
     assert "lcc/auto-1-mean-divides-by-n-1" in fork_branches and "lcc/auto-2-" in fork_branches

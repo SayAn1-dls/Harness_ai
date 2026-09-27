@@ -83,9 +83,17 @@ class Candidate:
         return f"{self.title}\n\n{self.body}\n\n(Found automatically by the LCC harness: {self.source}.)"
 
 
+def new_stats() -> dict[str, int]:
+    """The AI-honesty ledger: what the model claimed, and what happened to each claim."""
+    return {"claimed": 0, "dropped_no_trigger": 0, "dropped_low_confidence": 0, "dropped_unread_file": 0,
+            "kept": 0, "not_attempted": 0, "attempted": 0, "proven": 0, "unproven": 0}
+
+
 def discover(repo: Path, provider: BaseProvider | None, *, max_candidates: int = 3, audit_calls: int = 2,
-             audit_chars: int = 18_000, budget: Budget | None = None, log=print) -> list[Candidate]:
+             audit_chars: int = 18_000, budget: Budget | None = None, log=print,
+             stats: dict[str, int] | None = None) -> list[Candidate]:
     budget = budget or Budget()
+    stats = stats if stats is not None else new_stats()
     found: list[Candidate] = []
     log("scanning: running the test suite")
     found += from_failing_tests(repo, budget)
@@ -93,8 +101,10 @@ def discover(repo: Path, provider: BaseProvider | None, *, max_candidates: int =
     found += from_static_analysis(repo)
     if provider is not None and audit_calls > 0:
         log("scanning: model audit of the central source files")
-        found += from_model_audit(repo, provider, calls=audit_calls, chars=audit_chars)
-    return rank(found, max_candidates)
+        found += from_model_audit(repo, provider, calls=audit_calls, chars=audit_chars, stats=stats)
+    ranked = rank(found, max_candidates)
+    stats["not_attempted"] = sum(1 for c in found if c.source == "audit" and c not in ranked)
+    return ranked
 
 
 # ------------------------------------------------------------------ 1. failing tests
@@ -193,7 +203,9 @@ def audit_files(repo: Path, chars: int, calls: int) -> list[list[tuple[str, str]
     return chunks
 
 
-def from_model_audit(repo: Path, provider: BaseProvider, *, calls: int = 2, chars: int = 18_000) -> list[Candidate]:
+def from_model_audit(repo: Path, provider: BaseProvider, *, calls: int = 2, chars: int = 18_000,
+                     stats: dict[str, int] | None = None) -> list[Candidate]:
+    stats = stats if stats is not None else new_stats()
     out = []
     for chunk in audit_files(repo, chars, calls):
         prompt = "\n\n".join(f"### {rel}\n{body}" for rel, body in chunk)
@@ -206,8 +218,17 @@ def from_model_audit(repo: Path, provider: BaseProvider, *, calls: int = 2, char
             conf = _float(f.get("confidence"))
             kind = str(f.get("kind") or "bug").lower()
             kind = kind if kind in {"bug", "security", "performance"} else "bug"
-            if rel not in known or not str(f.get("trigger") or "").strip() or conf < (0.7 if kind == "performance" else 0.6):
+            stats["claimed"] += 1
+            if rel not in known:
+                stats["dropped_unread_file"] += 1  # a "bug" in a file the model was never shown
                 continue
+            if not str(f.get("trigger") or "").strip():
+                stats["dropped_no_trigger"] += 1  # it could not say how to trigger it
+                continue
+            if conf < (0.7 if kind == "performance" else 0.6):
+                stats["dropped_low_confidence"] += 1
+                continue
+            stats["kept"] += 1
             line = int(_float(f.get("line")))
             title = re.sub(r"\s+", " ", str(f.get("title") or "defect")).strip()[:100]
             body = (f"{f.get('why') or ''}\n\nLocation: `{rel}` line {line}\n"

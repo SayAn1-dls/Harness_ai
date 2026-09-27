@@ -8,6 +8,7 @@
 # make run < issue.md               issue piped on stdin
 # make auto REPO=<github-url|path>  no issue: the agent finds bugs/optimizations, fixes them, opens one PR each
 #                                   PR=0: local branches only; PR=1: open PRs even on repos you can't push to
+# make verify PROOF=outputs/<task>.proof.json REPO=<repo>   replay a fix's proof: tests fail before, pass after
 # make test                         unit tests + offline end-to-end benchmark (no API key needed)
 # make eval                         live benchmark on the 7 fixture tasks (uses AI_API_KEY)
 # make eval-real                    live benchmark on 20 real bug fixes from real repositories (uses AI_API_KEY)
@@ -35,10 +36,10 @@ PROVIDER ?=
 TASK     ?=
 PR       ?=
 
-.PHONY: help setup run auto test eval eval-real ablation bench-check doctor clean distclean
+.PHONY: help setup run auto verify test eval eval-real ablation bench-check doctor clean distclean
 
 help:
-	@sed -n '1,18p' Makefile | sed 's/^# \{0,1\}//'
+	@sed -n '1,19p' Makefile | sed 's/^# \{0,1\}//'
 
 setup:
 	@echo "Setting up LCC harness..."
@@ -84,6 +85,10 @@ eval:
 	@echo "Live benchmark (hidden checks grade every task)..."
 	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
 	@AI_API_KEY="$$AI_API_KEY" $(RUN) bench $(if $(PROVIDER),-p "$(PROVIDER)") $(foreach t,$(TASK),-t $(t))
+
+verify:
+	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
+	@$(RUN) verify $(if $(REPO),--repo "$(REPO)") $(if $(PROOF),--proof "$(PROOF)") $(if $(BASE),--base "$(BASE)") $(if $(HEAD),--head "$(HEAD)")
 
 eval-real:
 	@echo "Live benchmark on 20 real bug fixes (hidden tests from the real fix commits)..."

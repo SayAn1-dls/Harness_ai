@@ -43,6 +43,10 @@ class RunConfig:
     sandbox: str = "auto"
     # Ablation: model calls to skip, to measure whether they earn their tokens (env LCC_ABLATE="planner,reviewer").
     ablate: list = field(default_factory=list)
+    # Test-strength check after a proven fix: "off", "report" (record the score), or "gate" (a test that catches
+    # none of 3+ deliberate breaks of the fix sends the coder back once to strengthen it). Env LCC_MUTATION.
+    mutation: str = "report"
+    mutation_limit: int = 6
 
 
 @dataclass
@@ -91,6 +95,7 @@ def load_config(path: Path | None = None) -> Config:
     model.model_strong = env.get("LCC_MODEL_STRONG") or model.model_strong
     run = _pick(RunConfig, raw.get("run") or {})
     run.sandbox = (env.get("LCC_SANDBOX") or run.sandbox or "auto").lower()
+    run.mutation = (env.get("LCC_MUTATION") or run.mutation or "report").lower()
     if env.get("LCC_ABLATE") is not None:
         run.ablate = [a.strip().lower() for a in env["LCC_ABLATE"].split(",") if a.strip()]
     auto = _pick(AutoConfig, raw.get("auto") or {})
