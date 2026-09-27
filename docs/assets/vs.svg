@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" role="img" aria-label="Left: a chatbot says fixed it, then three tests fail. Right: LCC runs the test, sees it fail, fixes the code, sees it pass, checks nothing else broke, and opens a draft PR.">
+  <defs>
+    <style>
+      .t { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+      .head { font-size: 15px; font-weight: 800; }
+    </style>
+  </defs>
+  <rect width="900" height="300" rx="18" fill="#0b1220"/>
+  <rect width="0" height="0"><animate id="clk" attributeName="width" values="0;0" dur="12s" begin="0s;clk.end"/></rect>
+
+  <!-- left: the chatbot -->
+  <text x="40" y="44" class="t head" fill="#94a3b8">A chatbot</text>
+  <g class="t">
+    <rect x="40" y="66" width="360" height="54" rx="14" fill="#1e293b"/>
+    <text x="60" y="99" font-size="15" fill="#e2e8f0">"Fixed it! This should work now 🙂"</text>
+    <g opacity="0">
+      <set attributeName="opacity" to="1" begin="clk.begin+2.5s" dur="9.5s"/>
+      <text x="40" y="160" class="m" fill="#94a3b8">$ pytest</text>
+      <text x="40" y="186" class="m" fill="#f87171">FAILED tests/test_money.py::test_eur</text>
+      <text x="40" y="208" class="m" fill="#f87171">FAILED tests/test_invoice.py::test_total</text>
+      <text x="40" y="230" class="m" fill="#f87171">3 failed, 41 passed</text>
+    </g>
+    <g opacity="0">
+      <set attributeName="opacity" to="1" begin="clk.begin+4s" dur="8s"/>
+      <text x="40" y="268" font-size="14" fill="#fca5a5">...and you find out at 2am.</text>
+    </g>
+  </g>
+
+  <line x1="450" y1="30" x2="450" y2="270" stroke="#1e293b" stroke-width="2"/>
+
+  <!-- right: LCC -->
+  <text x="490" y="44" class="t head" fill="#5eead4">LCC</text>
+  <g class="m">
+    <text x="490" y="84" fill="#94a3b8" opacity="0">run the new test<set attributeName="opacity" to="1" begin="clk.begin+1s" dur="11s"/></text>
+    <text x="700" y="84" fill="#f87171" opacity="0">✗ fails (bug confirmed)<set attributeName="opacity" to="1" begin="clk.begin+2s" dur="10s"/></text>
+    <text x="490" y="118" fill="#94a3b8" opacity="0">edit money.py + invoice.py<set attributeName="opacity" to="1" begin="clk.begin+3.5s" dur="8.5s"/></text>
+    <text x="490" y="152" fill="#94a3b8" opacity="0">run the new test<set attributeName="opacity" to="1" begin="clk.begin+5s" dur="7s"/></text>
+    <text x="700" y="152" fill="#34d399" opacity="0">✓ passes<set attributeName="opacity" to="1" begin="clk.begin+6s" dur="6s"/></text>
+    <text x="490" y="186" fill="#94a3b8" opacity="0">run everything else<set attributeName="opacity" to="1" begin="clk.begin+7s" dur="5s"/></text>
+    <text x="700" y="186" fill="#34d399" opacity="0">✓ nothing broke<set attributeName="opacity" to="1" begin="clk.begin+8s" dur="4s"/></text>
+  </g>
+  <g class="t" opacity="0">
+    <set attributeName="opacity" to="1" begin="clk.begin+9s" dur="3s"/>
+    <rect x="490" y="216" width="370" height="40" rx="12" fill="#0f2a33" stroke="#2dd4bf"/>
+    <text x="675" y="241" text-anchor="middle" font-size="14" font-weight="700" fill="#5eead4">draft PR opened · a human decides</text>
+  </g>
+</svg>
