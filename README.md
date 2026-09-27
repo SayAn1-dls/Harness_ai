@@ -132,7 +132,7 @@ You don't need a bug report. One command does all of this:
 1. **Reads the whole repo.** It runs the full test suite and a defect checker over every file. Then the AI reads every source file, most important first, up to a budget you choose (about 30k tokens by default). Big files are split into parts, not skipped. The report says how much was read, for example *"The AI read 12 of 14 source files (2,300 of 2,710 lines)."*
 2. **Lists every issue it found** in `outputs/ISSUES-<repo>.md`: bugs, security problems and slow code. For each one you see where it is, what found it (the tests, the checker or the AI), and what happened to it: fixed with proof and a PR link, tried but not proven, found but not tried, or dropped with the reason.
 3. **Fixes the bugs,** but only with a test that fails before the fix and passes after it. **If a bug can't be proven, it's dropped.** The AI can't invent a bug and send it to someone.
-4. **Speeds up slow code, and shows the numbers.** For slow code, the model writes a small benchmark. LCC times it on the old code and the new code (the middle of 7 runs) and keeps the change only if **every test still passes** and it's **at least 1.1× faster**. The pull request gives the numbers, like *"12.4 ms → 3.1 ms (4.0× faster)"*. We tried it on a slow O(n²) duplicate check: the new version was more than 5× faster and was kept. A fake "speed-up" that changed nothing was rejected.
+4. **Speeds up slow code, and shows the numbers.** For slow code, the model writes a small benchmark. LCC times the old and new code in alternating rounds and keeps the change only if **every test still passes** and it's **at least 1.2× faster in every one of 3 alternating runs**. The pull request gives the numbers, like *"12.4 ms → 3.1 ms (4.0× faster)"*. We tried it on a slow O(n²) duplicate check: the new version was more than 5× faster and was kept. A fake "speed-up" that changed nothing was rejected.
 
 Everything that passes becomes a **draft** pull request from your fork. LCC asks before touching a repo you don't own, stops at 3 open pull requests, and runs other people's code inside Docker if Docker is running. The maintainers decide what gets merged.
 
@@ -203,7 +203,7 @@ We tested each of these. Inside the container the key isn't there, your home fol
 - Settings live in `lcc.config.toml`. The main ones:
   - per bug: 5 attempts, 300k tokens and 30 tool steps;
   - `audit_budget_chars` sets how much the AI reads in auto mode;
-  - `min_speedup` (1.1) is the speed-up a change needs to be kept;
+  - `min_speedup` (1.2) is the speed-up a change needs, in every round, to be kept;
   - `LCC_MUTATION=gate` sends weak tests back;
   - `LCC_SANDBOX=docker` for full isolation;
   - `LCC_MODEL` and `LCC_PROVIDER` pick the model.

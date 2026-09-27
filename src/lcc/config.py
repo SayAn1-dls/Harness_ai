@@ -48,7 +48,7 @@ class RunConfig:
     mutation: str = "report"
     mutation_limit: int = 6
     # An optimization is accepted only if its benchmark (.lcc/bench.py) is at least this much faster.
-    min_speedup: float = 1.1
+    min_speedup: float = 1.2  # timing on shared machines is noisy: 1.2x median AND faster in every round
 
 
 @dataclass

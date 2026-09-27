@@ -473,7 +473,7 @@ class Orchestrator:
         if not code_changed:
             return {"ok": False, "message": "no source file changed, so nothing can be faster."}
         script = ("import json, runpy, statistics, time\nns = runpy.run_path('.lcc/bench.py')\nb = ns['bench']\nb()\n"
-                  "ts = []\nfor _ in range(7):\n    t = time.perf_counter(); b(); ts.append(time.perf_counter() - t)\n"
+                  "ts = []\nfor _ in range(5):\n    t = time.perf_counter(); b(); ts.append(time.perf_counter() - t)\n"
                   "print('LCC_BENCH ' + json.dumps(statistics.median(ts)))")
 
         def timed() -> float | None:
@@ -483,17 +483,27 @@ class Orchestrator:
             m = re.search(r"LCC_BENCH ([0-9.eE+-]+)", res.get("stdout") or "")
             return float(m.group(1)) if m else None
 
-        with base_sources(root, code_changed):
-            before = timed()
-        after = timed()
-        if before is None or after is None:
+        # Interleave old/new over several rounds so both see the same machine conditions: a single before/after
+        # pair let timing noise on a busy CI runner pass an unchanged "optimization" as 1.1x faster.
+        befores, afters = [], []
+        for _ in range(3):
+            with base_sources(root, code_changed):
+                befores.append(timed())
+            afters.append(timed())
+        if None in befores or None in afters:
             return {"ok": False, "message": "the benchmark crashed on the original or the new code; bench() must run on both."}
+        import statistics
+
+        before, after = statistics.median(befores), statistics.median(afters)
         if before < 0.001:
             return {"ok": False, "message": f"the benchmark takes {before * 1000:.2f} ms: too small to measure; use a bigger input."}
-        speedup = before / after if after > 0 else float("inf")
-        ok = speedup >= self.min_speedup
-        text = (f"{before * 1000:.1f} ms → {after * 1000:.1f} ms ({speedup:.1f}× faster, median of 7)" if ok else
-                f"no measurable speed-up: {before * 1000:.1f} ms → {after * 1000:.1f} ms ({speedup:.2f}×, need {self.min_speedup}×)")
+        ratios = [b / a if a > 0 else float("inf") for b, a in zip(befores, afters)]
+        speedup = statistics.median(ratios)
+        consistent = min(ratios) > 1.0  # the new code must win every round, not just on average
+        ok = speedup >= self.min_speedup and consistent
+        text = (f"{before * 1000:.1f} ms → {after * 1000:.1f} ms ({speedup:.1f}× faster, 3 interleaved rounds)" if ok else
+                f"no measurable speed-up: {before * 1000:.1f} ms → {after * 1000:.1f} ms ({speedup:.2f}×"
+                + ("" if consistent else ", not faster in every round") + f"; need {self.min_speedup}× every time)")
         return {"ok": ok, "before_s": round(before, 6), "after_s": round(after, 6), "speedup": round(speedup, 2),
                 "message": text}
 
