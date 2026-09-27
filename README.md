@@ -189,7 +189,7 @@ We tested each of these. Inside the container the key isn't there, your home fol
 | `make eval-real` | Live score on the 20 real bugs |
 | `make ablation` | Same, with planner, reviewer and intake turned off one at a time |
 | `make bench-check` | Check the benchmark again: 20/20 valid, 20/20 with the real fix, 0/20 doing nothing |
-| `make test` | 104 tests plus a small offline benchmark, no key needed |
+| `make test` · `make lint` | 104 tests plus a small offline benchmark (no key needed) · ruff checks |
 | `make doctor` · `make clean` | Health check · clean up |
 </details>
 

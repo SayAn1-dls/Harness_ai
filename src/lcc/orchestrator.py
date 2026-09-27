@@ -497,7 +497,7 @@ class Orchestrator:
         before, after = statistics.median(befores), statistics.median(afters)
         if before < 0.001:
             return {"ok": False, "message": f"the benchmark takes {before * 1000:.2f} ms: too small to measure; use a bigger input."}
-        ratios = [b / a if a > 0 else float("inf") for b, a in zip(befores, afters)]
+        ratios = [b / a if a > 0 else float("inf") for b, a in zip(befores, afters, strict=True)]
         speedup = statistics.median(ratios)
         consistent = min(ratios) > 1.0  # the new code must win every round, not just on average
         ok = speedup >= self.min_speedup and consistent

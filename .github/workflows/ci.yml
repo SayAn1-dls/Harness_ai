@@ -25,6 +25,8 @@ jobs:
           node-version: "20"
       - name: make setup
         run: make setup PYTHON=python
+      - name: make lint
+        run: make lint
       - name: make test (unit tests + offline benchmark, no API key)
         run: make test
 
