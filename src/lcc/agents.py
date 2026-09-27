@@ -414,6 +414,8 @@ def coder_task_prompt(task: TaskState, plan: ImplementationPlan, diff: str) -> s
         elif not b.get("tests_failed"):
             line += (" The existing suite does not catch this issue, so you MUST add or update a test that fails"
                      " without your fix and passes with it; the verifier checks this.")
+        if not b.get("tests_run"):
+            line += " " + _no_tests_hint(Path(task.workspace))
         lines.append(line)
     if task.history:
         lines.append(f"This is attempt {task.iteration}. Previous attempts (do not repeat them):\n" + _history_text(task))
@@ -463,6 +465,28 @@ def run_coder(
     store.write_json(f"coder_{task.iteration}.json", data)
     store.write_json(f"coder_{task.iteration}_transcript.json", loop.messages)
     return AgentResult(agent="coder", success=loop.finished and bool(tools.changed), summary=loop.summary, data=data)
+
+
+def _no_tests_hint(root: Path) -> str:
+    """The verifier can only accept a fix whose test it can run. A repository with no runnable tests needs its first
+    one, wired to the command the harness uses; otherwise every attempt ends as 'no tests were collected'."""
+    pkg = root / "package.json"
+    if pkg.exists() and not any((root / m).exists() for m in ("pyproject.toml", "setup.py", "setup.cfg")):
+        import json
+
+        try:
+            has_script = "test" in (json.loads(pkg.read_text(encoding="utf-8")).get("scripts") or {})
+        except (ValueError, OSError):
+            has_script = False
+        if has_script:
+            return "The repository's `npm test` collected no tests: add your test where that script finds it."
+        runner = ("tsx --test" if (root / "node_modules" / ".bin" / "tsx").exists() else "node --test")
+        return ("The repository has NO test runner (package.json has no \"test\" script), so the verifier's `npm test` "
+                f"collects nothing. Add one: a \"test\" script such as `{runner} tests/*.test.*` in package.json, and "
+                "a small test file using `node:test` + `node:assert` that exercises the buggy function directly (keep "
+                "it free of databases, servers and browsers). Run `npm test` yourself before finish.")
+    return ("The repository has NO tests yet, so pytest collects nothing. Create tests/test_<topic>.py (pytest) that "
+            "imports the buggy function and asserts the correct result, and run it with run_test before finish.")
 
 
 def _history_text(task: TaskState) -> str:

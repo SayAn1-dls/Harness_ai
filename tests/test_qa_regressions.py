@@ -227,3 +227,18 @@ def test_docker_sandbox_isolates_target_code(tmp_path, monkeypatch):
     lines = probe["stdout"].split()
     assert lines[:2] == ["None", "False"]  # no key, no home directory
     assert probe["returncode"] != 0 and ("unreachable" in probe["stderr"] or "OSError" in probe["stderr"])
+
+
+def test_coder_is_told_to_add_a_test_runner_when_the_repo_has_none(tmp_path):
+    import json as _json
+
+    from lcc.agents import _no_tests_hint
+
+    (tmp_path / "package.json").write_text(_json.dumps({"scripts": {"dev": "next dev"}}))
+    assert "NO test runner" in _no_tests_hint(tmp_path) and "node --test" in _no_tests_hint(tmp_path)
+    (tmp_path / "node_modules" / ".bin").mkdir(parents=True)
+    (tmp_path / "node_modules" / ".bin" / "tsx").write_text("")
+    assert "tsx --test" in _no_tests_hint(tmp_path)
+    py = tmp_path / "py"
+    py.mkdir()
+    assert "tests/test_<topic>.py" in _no_tests_hint(py)

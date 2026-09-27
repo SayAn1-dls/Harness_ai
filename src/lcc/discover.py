@@ -52,6 +52,9 @@ DEFECT_RULES = {
     "S602": "subprocess with shell=True (command injection)",
     "S608": "SQL built with string formatting (SQL injection)",
 }
+# Rules that mostly fire on safe code (SQL assembled from literals around bound parameters; a lambda consumed
+# before the loop moves on). Their candidates rank below a model finding that names a concrete trigger.
+NOISY_RULES = {"S608", "B023"}
 SOURCE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".php", ".cs", ".kt", ".c", ".cc", ".cpp", ".h"}
 SKIP_PARTS = {"docs", "doc", "examples", "example", "vendor", "third_party", "migrations", "dist", "build", "site-packages"}
 
@@ -181,7 +184,7 @@ def from_static_analysis(repo: Path) -> list[Candidate]:
                   "\n".join(f"- {rel}:{h.get('location', {}).get('row')}: {h.get('message')}" for h in hits[:5]) +
                   "\n\nConfirm the defect with a test that fails because of it, then fix it. If a hit is intentional "
                   "and harmless, leave it and fix only the real ones."),
-            files=[rel], line=lines[0] if lines else 0, score=0.8 if security or code in {"F821", "B006", "B023", "F632"} else 0.6))
+            files=[rel], line=lines[0] if lines else 0, score=0.5 if code in NOISY_RULES else 0.8 if security or code in {"F821", "B006", "F632"} else 0.6))
     return out
 
 

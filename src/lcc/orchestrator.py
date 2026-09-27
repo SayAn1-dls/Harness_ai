@@ -448,7 +448,10 @@ class Orchestrator:
             return {"ok": False, "level": 1, "message": (
                 "[harness] The tests that pass now also passed before your change, so they prove nothing about "
                 "this issue. Add or update a test that fails without your fix and passes with it.")}
-        with base_sources(root, sources):
+        # A repository that had no runnable tests gets its runner wired in package.json. That wiring stays applied
+        # on the base run: reverting it would fail on "missing script", a false fail-to-pass.
+        runner = [f for f in sources if Path(f).name == "package.json"] if not task.baseline.get("tests_run") else []
+        with base_sources(root, [f for f in sources if f not in runner]):
             if all(t.endswith(".py") for t in tests):
                 base_results = {t: tools.run_test(target=t) for t in tests}
             else:  # other languages: the runner's file targeting varies, so run the suite on the base sources
