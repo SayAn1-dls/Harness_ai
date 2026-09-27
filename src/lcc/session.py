@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -258,11 +259,40 @@ def _progress(console: Console):
     return show
 
 
-def setup_env(repo: Path, cfg: Config, console: Console) -> None:
-    """Where the target's code runs: a Docker sandbox, or an isolated venv on this machine (or the harness python)."""
+RUN_ENV = ("LCC_SANDBOX", "LCC_SANDBOX_VOLUME", "LCC_TEST_PYTHON")
+
+
+@contextlib.contextmanager
+def _env_scope():
+    """setup_env() configures the process for one target; put it back afterwards so nothing leaks into the next
+    issue (or the next test)."""
+    saved = {k: os.environ.get(k) for k in RUN_ENV}
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _docker_running() -> bool:
+    return bool(shutil.which("docker")) and subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+
+
+def setup_env(repo: Path, cfg: Config, console: Console, untrusted: bool = False) -> None:
+    """Where the target's code runs: a Docker sandbox, or an isolated venv on this machine (or the harness python).
+    sandbox="auto": Docker for untrusted code (auto mode on someone's repository) when Docker is running."""
     test_py = None
     os.environ.pop("LCC_SANDBOX", None)
-    if cfg.run.sandbox == "docker":
+    mode = cfg.run.sandbox
+    if mode == "auto":
+        mode = "docker" if untrusted and _docker_running() else "none"
+        if untrusted and mode == "none":
+            console.print("[yellow]Docker is not running: this repository's code runs on your machine (credentials "
+                          "stripped, git guarded, but files readable). Start Docker for full isolation.[/]")
+    if mode == "docker":
         from lcc.sandbox import docker_prepare
 
         os.environ["LCC_SANDBOX"] = "docker"
@@ -281,6 +311,11 @@ def setup_env(repo: Path, cfg: Config, console: Console) -> None:
 
 
 def solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console: Console) -> dict:
+    with _env_scope():
+        return _solve(issue, repo, cfg, provider, console)
+
+
+def _solve(issue: Issue, repo: Path, cfg: Config, provider: BaseProvider, console: Console) -> dict:
     task_id = issue.task_id
     setup_env(repo, cfg, console)
 
@@ -490,6 +525,12 @@ def _pr_permission(repo: Path, cfg: Config, console: Console, wanted: bool, expl
 
 def auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, *, open_prs: bool = True,
              base: str = "", explicit_pr: bool = False) -> dict:
+    with _env_scope():
+        return _auto_fix(spec, cfg, provider, console, open_prs=open_prs, base=base, explicit_pr=explicit_pr)
+
+
+def _auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, *, open_prs: bool = True,
+              base: str = "", explicit_pr: bool = False) -> dict:
     """Repo link only: clone, find problems, fix and verify each, open one PR per verified fix."""
     from lcc.discover import discover
     from lcc.github_pr import open_pull_request
@@ -498,7 +539,8 @@ def auto_fix(spec: str, cfg: Config, provider: BaseProvider, console: Console, *
     repo = resolve_repo(spec, cfg.resolve(cfg.run.workspaces_dir), console)
     if base or ref:
         checkout_base(repo, base or ref, console)
-    setup_env(repo, cfg, console)  # discovery runs the target's tests too: same sandbox as the fixes
+    cfg.run.sandbox = "docker" if cfg.run.sandbox == "auto" and _docker_running() else cfg.run.sandbox
+    setup_env(repo, cfg, console, untrusted=True)  # discovery runs the target's tests too: same sandbox as the fixes
     console.print(Panel.fit(f"[bold]auto mode[/] {repo}\nfinding bugs, security issues and clear optimizations; "
                             f"up to {cfg.auto.max_fixes} fix(es), each verified" +
                             (", one pull request per verified fix" if open_prs else " (pull requests disabled)"),

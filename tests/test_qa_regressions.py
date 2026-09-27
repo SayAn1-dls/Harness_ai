@@ -218,6 +218,8 @@ def test_docker_sandbox_isolates_target_code(tmp_path, monkeypatch):
     assert summary["resolved"] is True  # the whole pipeline works with every test run inside the container
     import os as _os
 
+    monkeypatch.setenv("LCC_SANDBOX", "docker")  # solve() restores the env when it returns; probe the same sandbox
+    monkeypatch.setenv("LCC_SANDBOX_VOLUME", "lcc-venv-repo")
     t = ToolRegistry(root, ToolPolicy({"read_repository": True, "shell": True}), Budget())
     probe = t.shell("python -c \"import os, socket; print(repr(os.environ.get('AI_API_KEY')));"
                     " print(os.path.exists(os.path.expanduser('~/.ssh')) or os.path.exists('" + _os.path.expanduser("~") + "'));"

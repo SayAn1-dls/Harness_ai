@@ -58,6 +58,9 @@ class Orchestrator:
         self.llm: BaseProvider = self.raw_provider
         self.coder_max_steps = coder_max_steps
         self.test_timeout = test_timeout
+        from lcc.config import load_config
+
+        self.ablate = set(load_config().run.ablate)  # e.g. {"planner", "reviewer", "intake"}
         self.index = None
         self.snapshot = None
         self.rules = []
@@ -113,7 +116,7 @@ class Orchestrator:
             self._implement(task)
             ok = self._verify(task)
             self.findings = []
-            if ok and task.lane != Lane.A:
+            if ok and task.lane != Lane.A and "reviewer" not in self.ablate:
                 self._review(task)
             judge = self._judge(task, ok)
             score = global_task_score(task, self.plan, self.last_verification, self.last_changed)
@@ -147,8 +150,16 @@ class Orchestrator:
         transition(task, TaskStatus.ANALYZING)
         task.current_agent = "intake"
         self.store.save_task(task)
-        result = run_intake(task, self.llm, self.store)
-        gate = intake_gate(result)
+        if "intake" in self.ablate:  # ablation: the issue itself is the only acceptance criterion
+            from lcc.schemas import AcceptanceCriterion, IntakeResult
+
+            result = IntakeResult(problem=task.objective, intent="", requirements=[task.objective],
+                                  acceptance_criteria=[AcceptanceCriterion(id="AC-01", text=task.objective)],
+                                  constraints=[], ambiguities=[], blocking_ambiguities=[], risk="low", score=100)
+            gate = "ok"
+        else:
+            result = run_intake(task, self.llm, self.store)
+            gate = intake_gate(result)
         if gate == "iterate_intake":
             result = run_intake(
                 task, self.llm, self.store,
@@ -232,7 +243,7 @@ class Orchestrator:
         task.current_agent = "planner"
         if not task.affected_files and self.snapshot:
             task.affected_files = self.snapshot.files[:8]
-        if task.lane == Lane.A:  # lane A (intake -> coder -> verifier): the coder plans for itself
+        if task.lane == Lane.A or "planner" in self.ablate:  # lane A, or ablation: the coder plans for itself
             self.plan = quick_plan(task, self.store)
         else:
             self.plan = run_planner(task, self.llm, self._summary(6, 1000), self.store)
@@ -506,7 +517,7 @@ class Orchestrator:
         task.current_agent = "planner"
         note = f"class={rec['class']} action={rec['action']}\nfailed assumption: {rec['failed_assumption']}\nguidance: {rec['guidance']}"
         task.history.append(record)
-        if task.lane == Lane.A:
+        if task.lane == Lane.A or "planner" in self.ablate:
             self.plan = quick_plan(task, self.store, recovery_note=note)
         else:
             self.plan = run_planner(task, self.llm, self._summary(4, 800), self.store, recovery_note=note)

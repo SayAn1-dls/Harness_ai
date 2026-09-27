@@ -40,7 +40,9 @@ class RunConfig:
     preflight: bool = True
     # "none": target code runs on this machine with credentials stripped and git guarded.
     # "docker": target code (install, tests, shell) runs in a container with no network and no credentials.
-    sandbox: str = "none"
+    sandbox: str = "auto"
+    # Ablation: model calls to skip, to measure whether they earn their tokens (env LCC_ABLATE="planner,reviewer").
+    ablate: list = field(default_factory=list)
 
 
 @dataclass
@@ -88,7 +90,9 @@ def load_config(path: Path | None = None) -> Config:
     model.model_fast = env.get("LCC_MODEL_FAST") or model.model_fast
     model.model_strong = env.get("LCC_MODEL_STRONG") or model.model_strong
     run = _pick(RunConfig, raw.get("run") or {})
-    run.sandbox = (env.get("LCC_SANDBOX") or run.sandbox or "none").lower()
+    run.sandbox = (env.get("LCC_SANDBOX") or run.sandbox or "auto").lower()
+    if env.get("LCC_ABLATE") is not None:
+        run.ablate = [a.strip().lower() for a in env["LCC_ABLATE"].split(",") if a.strip()]
     auto = _pick(AutoConfig, raw.get("auto") or {})
     if env.get("LCC_OPEN_PR"):
         auto.open_pr = env["LCC_OPEN_PR"].strip().lower() not in {"0", "false", "no", "off"}

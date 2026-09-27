@@ -20,7 +20,8 @@
 | **Real benchmark:** 20 real bug fixes from 6 libraries (more-itertools, toolz, boltons, tabulate, sqlparse, parse) | Each hidden test **fails at the parent commit and passes at the real fix**: 20/20 validated (`make bench-check`) | The benchmark is real and gradeable |
 | Harness on those 20 repos with the reference fix replayed (oracle, **not a model**) | **20/20** verified and graded; a do-nothing model scores **0/20** | Baseline, fail-to-pass proof, lint, review and grading work on real test suites, and the grader can't be gamed by doing nothing |
 | **Live model on the real benchmark** | ⏳ **not run yet**: needs a funded DeepSeek or Qwen key (`make eval-real`) | This is the number that matters, and it is still missing |
-| Unit and integration tests | 90 passing on macOS and in a clean `python:3.11-slim` Linux container; CI runs 3.11, 3.12 and 3.13 | Pipeline correctness |
+| Unit and integration tests | 91 passing on macOS and in a clean `python:3.11-slim` Linux container; CI runs 3.11, 3.12 and 3.13 | Pipeline correctness |
+| Full pipeline through the real HTTP adapter against a strict fake DeepSeek-style server | Passes: every tool call answered, no `null` content, valid schemas, `json` present in JSON mode | Lowers the risk of the first live run; does not replace it |
 | Offline toy benchmark (7 fixtures) | 7/7 with **scripted** model replies | Wiring only, not model quality |
 
 <img src="docs/assets/terminal.svg" alt="Illustrative terminal session of make auto" width="100%"/>
@@ -41,7 +42,8 @@ make run                                      # paste an issue URL, issue text, 
 | `make auto REPO=<url> [PR=0\|1]` | No issue: find bugs → fix → prove → draft PRs (see [Auto mode](#auto-mode)) |
 | `make eval-real` / `make eval` | Live score on the 20 real tasks / the 7 toy fixtures |
 | `make bench-check` | Re-prove the real benchmark: validity, oracle 20/20, do-nothing 0/20 (no key) |
-| `make test` | 90 tests + offline toy benchmark (no key) |
+| `make ablation` | Real tasks with the planner, reviewer and intake calls switched off in turn: which ones earn their tokens (needs a key) |
+| `make test` | 91 tests + offline toy benchmark (no key) |
 
 ## How it works
 
@@ -93,8 +95,9 @@ The adapter handles server differences automatically:
 
 | Mode | Target code (installs, tests, shell) | Protection |
 |---|---|---|
-| `sandbox = "none"` (default) | Runs on your machine | Credentials (`*KEY*`, `*TOKEN*`, cloud, SSH agent) are **stripped from its environment**. A `git` guard first on PATH blocks state-changing git in the task repo, even from `subprocess` inside Python. Destructive shell commands are blocked. **It can still read files in your home directory.** |
-| `sandbox = "docker"` | Runs in a container | **No network** during tests, **no credentials**, only the workspace mounted (tested: the key is `None`, home is invisible, network is unreachable). Recommended for repos you don't trust (`LCC_SANDBOX=docker make auto …`). |
+| `sandbox = "auto"` (default) | `make auto` on a repository: **Docker when it is running**, otherwise the row below with a warning. `make run`: the row below |
+| `sandbox = "none"` | Runs on your machine | Credentials (`*KEY*`, `*TOKEN*`, cloud, SSH agent) are **stripped from its environment**. A `git` guard first on PATH blocks state-changing git in the task repo, even from `subprocess` inside Python. Destructive shell commands are blocked. **It can still read files in your home directory.** |
+| `sandbox = "docker"` | Runs in a container | **No network** during tests, **no credentials**, only the workspace mounted (tested: the key is `None`, home is invisible, network is unreachable). Forced with `LCC_SANDBOX=docker`. |
 
 On top of that, work happens only on `agent/*` branches, your uncommitted changes are stashed and restored, folders that aren't git roots are copied instead of modified, and merge permission is never granted.
 
@@ -113,6 +116,8 @@ These are character-based estimates from scripted runs. Real billed tokens will 
 ## Limits (read before judging)
 
 - **No live-model score yet.** Everything above measures the harness, not DeepSeek or Qwen solving issues.
+- **The planner, reviewer and intake calls are not yet proven to pay off.** `make ablation` measures it once a key is available.
+- Token figures are character-based estimates; live runs record the provider's billed usage (`tokens_in`, `tokens_out`, `tokens_cached`).
 - **Python is the first-class target.** JS, TS, Go and Rust get test detection, output parsing and `npm ci`, but no language-specific linting or static analysis.
 - The real benchmark is small (20 tasks, all Python libraries); models may have seen some of these public fixes during training.
 - The default mode is not a sandbox against a hostile repository; use `sandbox = "docker"` for that.
@@ -125,7 +130,7 @@ These are character-based estimates from scripted runs. Real billed tokens will 
 | `[model] provider` / `model` / `base_url` | `auto` / `""` / `""` | `LCC_PROVIDER`, `LCC_MODEL`, `LCC_BASE_URL` |
 | `[model] temperature` / `seed` | `0.0` / `7` | Reproducibility |
 | `[run] max_iterations` / `token_budget` / `coder_max_steps` | `5` / `300000` / `30` | Per-issue budgets |
-| `[run] test_timeout` / `preflight` / `sandbox` | `900` / `true` / `none` | `LCC_SANDBOX=docker` for isolation |
+| `[run] test_timeout` / `preflight` / `sandbox` / `ablate` | `900` / `true` / `auto` / `[]` | `LCC_SANDBOX`, `LCC_ABLATE=planner,reviewer,intake` |
 | `[auto] max_fixes` / `audit_calls` / `pr_draft` / `max_open_prs` | `3` / `2` / `true` / `3` | Auto mode |
 
 The credential is read only from `AI_API_KEY`: never from config, docs or git.

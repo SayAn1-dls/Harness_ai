@@ -179,3 +179,77 @@ def test_bench_aborts_on_fatal_provider_error(tmp_path):
     rows, summary, _ = run_bench(tasks, "broke", provider=Broke())
     assert len(rows) == 1 and rows[0]["fatal"]
     assert "insufficient balance" in summary["aborted"]
+
+
+def test_full_pipeline_against_a_strict_openai_compatible_server(tmp_path):
+    """The whole harness through the real HTTP adapter, against a fake server that rejects what DeepSeek/DashScope
+    reject: unanswered tool_call ids, null content, unknown roles, JSON mode without the word json, bad tool schemas."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from lcc.orchestrator import Orchestrator, create_task
+    from lcc.schemas import TaskStatus
+    from lcc.store import HarnessStore
+
+    seen = []
+
+    def check(body):
+        msgs = body["messages"]
+        pending = set()
+        for m in msgs:
+            assert m["role"] in {"system", "user", "assistant", "tool"}, m["role"]
+            assert m.get("content") is not None, "null content"
+            if m["role"] == "tool":
+                assert m["tool_call_id"] in pending, "tool reply without a matching call"
+                pending.discard(m["tool_call_id"])
+            else:
+                assert not pending, f"unanswered tool calls {pending}"
+            for c in m.get("tool_calls") or []:
+                json.loads(c["function"]["arguments"])
+                pending.add(c["id"])
+        for t in body.get("tools") or []:
+            assert t["type"] == "function" and t["function"]["parameters"]["type"] == "object"
+        if body.get("response_format"):
+            assert "json" in json.dumps(msgs).lower()
+
+    def handler(req):
+        body = json.loads(req.content)
+        try:
+            check(body)
+        except (AssertionError, KeyError, ValueError) as exc:
+            return httpx.Response(400, json={"error": {"message": f"invalid request: {exc}"}})
+        seen.append(body)
+        system = body["messages"][0]["content"]
+        if "Issue Analyst" in system:
+            return _ok(json.dumps({"problem": "add() returns a - b instead of a + b", "intent": "fix add",
+                                   "requirements": ["add returns the sum"],
+                                   "acceptance_criteria": [{"id": "AC-01", "text": "add(2, 3) returns 5 instead of -1"}],
+                                   "constraints": [], "ambiguities": [], "blocking_ambiguities": [], "risk": "low"}))
+        if "Planner" in system:
+            return _ok(json.dumps({"steps": [{"order": 1, "action": "fix add", "files": ["app.py"]}],
+                                   "allowed_files": ["app.py", "tests/test_app.py"], "forbidden_files": []}))
+        if "adversarial reviewer" in system:
+            return _ok(json.dumps({"findings": []}))
+        if "Implementation Agent" in system:
+            if not any(m["role"] == "tool" for m in body["messages"]):
+                return _ok("", tool_calls=[
+                    {"id": "c1", "type": "function", "function": {"name": "edit_file", "arguments": json.dumps(
+                        {"path": "app.py", "old_str": "return a - b", "new_str": "return a + b"})}},
+                    {"id": "c2", "type": "function", "function": {"name": "write_file", "arguments": json.dumps(
+                        {"path": "tests/test_sum.py", "content": "from app import add\n\n\ndef test_sum():\n    assert add(2, 3) == 5\n"})}}])
+            return _ok("", tool_calls=[{"id": "c3", "type": "function",
+                                        "function": {"name": "finish", "arguments": '{"summary": "add subtracted"}'}}])
+        return _ok(json.dumps({"class": "CODE_BUG", "action": "patch"}))
+
+    root = tmp_path / "repo"
+    shutil.copytree(Path(__file__).parent / "fixtures" / "mini_repo", root)
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "i"]):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    store = HarnessStore(root)
+    task = create_task(store, "T-1", "add() subtracts", root, issue_body="add(2, 3) returns -1; it must return 5.")
+    provider = _provider(handler, preset="deepseek")
+    task = Orchestrator(store, provider).run(task)
+    assert task.status == TaskStatus.HUMAN_REVIEW, task.last_failure
+    assert len(seen) >= 4 and any(b.get("tools") for b in seen) and any(b.get("response_format") for b in seen)
+    assert task.budget.tokens_used > 0 and task.budget.model_calls == len(seen)

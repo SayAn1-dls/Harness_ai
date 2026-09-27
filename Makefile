@@ -11,6 +11,7 @@
 # make test                         unit tests + offline end-to-end benchmark (no API key needed)
 # make eval                         live benchmark on the 7 fixture tasks (uses AI_API_KEY)
 # make eval-real                    live benchmark on 20 real bug fixes from real repositories (uses AI_API_KEY)
+# make ablation                     real tasks with planner / reviewer / intake switched off in turn (uses AI_API_KEY)
 # make bench-check                  prove the real benchmark is sound: hidden tests fail before/pass after,
 #                                   the reference fix scores 20/20 and a do-nothing model scores 0/20 (no key)
 # make doctor                       check python, git, config and credential presence
@@ -34,10 +35,10 @@ PROVIDER ?=
 TASK     ?=
 PR       ?=
 
-.PHONY: help setup run auto test eval eval-real bench-check doctor clean distclean
+.PHONY: help setup run auto test eval eval-real ablation bench-check doctor clean distclean
 
 help:
-	@sed -n '1,17p' Makefile | sed 's/^# \{0,1\}//'
+	@sed -n '1,18p' Makefile | sed 's/^# \{0,1\}//'
 
 setup:
 	@echo "Setting up LCC harness..."
@@ -88,6 +89,15 @@ eval-real:
 	@echo "Live benchmark on 20 real bug fixes (hidden tests from the real fix commits)..."
 	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
 	@AI_API_KEY="$$AI_API_KEY" $(RUN) bench --tasks-dir benchmarks/real $(if $(PROVIDER),-p "$(PROVIDER)") $(foreach t,$(TASK),-t $(t))
+
+ablation:
+	@echo "Ablation on the real tasks: does each model call earn its tokens? (uses AI_API_KEY)"
+	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }
+	@for v in none planner reviewer intake planner,reviewer,intake; do \
+		echo "=== ablate: $$v"; \
+		LCC_ABLATE=$$([ $$v = none ] && echo "" || echo $$v) AI_API_KEY="$$AI_API_KEY" $(RUN) bench --tasks-dir benchmarks/real \
+			--results-dir benchmarks/results/ablation-$$(echo $$v | tr , -) | grep -E '"(resolved|total_tokens|avg_tokens_per_task)"'; \
+	done
 
 bench-check:
 	@test -x $(PY) || { echo "error: run 'make setup' first"; exit 1; }

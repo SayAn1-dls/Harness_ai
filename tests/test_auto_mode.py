@@ -87,6 +87,7 @@ def test_auto_mode_finds_fixes_and_opens_prs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = load_config()
     cfg.run.prepare_env = False
+    cfg.run.sandbox = "none"  # the Docker path has its own test
     cfg.run.workspaces_dir = str(tmp_path / "ws")
     cfg.run.outputs_dir = str(tmp_path / "out")
     audit = {"findings": [{"file": "stats.py", "line": 2, "kind": "bug", "title": "mean divides by n-1",
@@ -129,6 +130,7 @@ def test_foreign_repo_needs_explicit_permission(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = load_config()
     cfg.run.prepare_env = False
+    cfg.run.sandbox = "none"  # the Docker path has its own test
     cfg.run.workspaces_dir = str(tmp_path / "ws")
     cfg.run.outputs_dir = str(tmp_path / "out")
     cfg.auto.audit_calls = 0  # static analysis finds the mutable default
