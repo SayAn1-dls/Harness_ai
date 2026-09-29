@@ -64,6 +64,9 @@ class AutoConfig:
     open_pr: bool = True
     pr_draft: bool = True  # maintainers see a draft first; mark it ready yourself
     max_open_prs: int = 3  # never have more than this many open harness PRs on one repository
+    # When no fix is proven, open one draft PR for the most promising unverified attempt, titled and described as
+    # unverified (env LCC_PR_UNVERIFIED). Off by default: a PR normally carries proof.
+    pr_unverified: bool = False
 
 
 @dataclass
@@ -107,6 +110,8 @@ def load_config(path: Path | None = None) -> Config:
     auto = _pick(AutoConfig, raw.get("auto") or {})
     if env.get("LCC_OPEN_PR"):
         auto.open_pr = env["LCC_OPEN_PR"].strip().lower() not in {"0", "false", "no", "off"}
+    if env.get("LCC_PR_UNVERIFIED"):
+        auto.pr_unverified = env["LCC_PR_UNVERIFIED"].strip().lower() not in {"0", "false", "no", "off"}
     return Config(model=model, run=run, path=path if path.is_file() else None, auto=auto)
 
 

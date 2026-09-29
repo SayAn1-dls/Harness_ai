@@ -246,3 +246,54 @@ def test_pr_with_only_a_token_no_gh_cli(tmp_path, monkeypatch):
     assert pr["head"] == "bot:lcc/t" and pr["base"] == "main" and pr["draft"] is True
     assert "lcc/t" in subprocess.run(["git", "branch", "--list"], cwd=fork, text=True, capture_output=True).stdout
     assert subprocess.run(["git", "branch", "--list"], cwd=upstream, text=True, capture_output=True).stdout.split() == ["*", "main"]
+
+
+def test_unverified_attempt_gets_one_draft_pr_marked_unverified(tmp_path, monkeypatch):
+    _upstream, fork, gh_log = _fake_github(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    cfg = load_config()
+    cfg.run.prepare_env = False
+    cfg.run.sandbox = "none"
+    cfg.run.max_iterations = 1
+    cfg.run.workspaces_dir = str(tmp_path / "ws")
+    cfg.run.outputs_dir = str(tmp_path / "out")
+    cfg.auto.max_fixes = 1
+    cfg.auto.pr_unverified = True
+    audit = {"findings": [{"file": "stats.py", "line": 2, "kind": "bug", "title": "mean divides by n-1",
+                           "why": "mean() divides by len-1", "trigger": "mean([2, 4])", "expected": "3",
+                           "actual": "6", "confidence": 0.9}]}
+    provider = ScriptedProvider({"auditor": [audit], "coder": [  # fixes the source but writes no test: not provable
+        [tc("edit_file", path="stats.py", old_str="(len(values) - 1)", new_str="len(values)")],
+        [tc("finish", summary="mean divided by n-1; now divides by n.")]]})
+    out = auto_fix("https://github.com/acme/demo", cfg, provider, Console(quiet=True), explicit_pr=True)
+
+    assert out["fixed"] == 0 and out["prs"] == ["https://github.com/acme/demo/pull/1"], json.dumps(out["results"], indent=1)
+    assert out["results"][0]["unverified_pr"] is True
+    create = [line for line in gh_log.read_text().splitlines() if line.startswith("pr create")]
+    assert len(create) == 1 and "--title [unverified] fix: mean divides by n-1" in create[0]
+    assert gh_log.read_text().count("--draft") == 1  # always a draft, whatever pr_draft says
+    assert "**Unverified.**" in gh_log.read_text() and "Why it is not verified" in gh_log.read_text()
+    report = (tmp_path / "out" / f"ISSUES-{Path(out['repo']).name}.md").read_text()
+    assert "attempted, not proven" in report and "unverified draft PR" in report
+
+
+def test_unverified_pr_is_off_by_default_and_needs_a_source_change(tmp_path):
+    from lcc.config import AutoConfig
+    from lcc.session import best_unverified
+
+    assert AutoConfig().pr_unverified is False
+    tests_only, source = tmp_path / "a.patch", tmp_path / "b.patch"
+    tests_only.write_text("diff --git a/tests/test_x.py b/tests/test_x.py\n")
+    source.write_text("diff --git a/src/x.ts b/src/x.ts\ndiff --git a/src/x.test.ts b/src/x.test.ts\n")
+    a = {"resolved": False, "patch": str(tests_only), "verification": {"tests_run": 3, "tests_failed": 0}}
+    b = {"resolved": False, "patch": str(source), "verification": {"tests_run": 0}}
+    assert best_unverified([a]) is None  # a PR of tests alone fixes nothing
+    assert best_unverified([a, b]) is b
+    assert best_unverified([dict(b, fatal=True)]) is None
+
+
+def test_noisy_static_rules_rank_below_a_triggered_model_finding(tmp_path):
+    (tmp_path / "m.py").write_text("def q(t):\n    return f\"SELECT * FROM {t}\"\n")
+    static = [c for c in from_static_analysis(tmp_path) if "SQL" in c.title]
+    audit = Candidate("audit", "bug", "real bug", "", ["n.py"], 3, 0.6)
+    assert static and [c.title for c in rank(static + [audit], 1)] == ["real bug"]

@@ -40,9 +40,11 @@ groq = "llama-3.3-70b-versatile"
 grok = "grok-4"
 
 [run]
-# Per issue: coder/recovery iterations and total token budget.
+# Per issue: coder/recovery iterations and total token budget. Every model call counts its whole prompt, so one
+# coder turn late in an attempt costs ~20k tokens: 300k ran out inside the first attempt and recovery never ran.
+# 1.5M leaves room for about two full attempts; on deepseek-chat (mostly cache hits) that is well under $1 per issue.
 max_iterations = 5
-token_budget = 300000
+token_budget = 1500000
 coder_max_steps = 30
 # Where `make run` clones target repositories and writes patches.
 workspaces_dir = "workspaces"
@@ -75,3 +77,6 @@ audit_chars = 18000
 open_pr = true
 pr_draft = true
 max_open_prs = 3
+# When no fix is proven, open ONE draft PR for the most promising unverified attempt. Its title starts with
+# "[unverified]" and its description says what failed. LCC_PR_UNVERIFIED=0 turns it off.
+pr_unverified = true
