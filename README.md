@@ -4,7 +4,7 @@
 
 # LCC
 
-### An AI that fixes bugs has to prove the fix. That's the whole idea.
+### An AI that fixes bugs has to prove the fix. That is the whole idea.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SayAn1-dls/Harness_ai/ci.yml?branch=agent/core-loop&style=flat-square&label=CI&labelColor=141413)](https://github.com/SayAn1-dls/Harness_ai/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20·%203.12%20·%203.13-D97757?style=flat-square&labelColor=141413)
